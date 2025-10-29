@@ -60,7 +60,6 @@ src/
 
 ### Pré-requisitos
 
-1. **Configurar Supabase** - Siga o guia em [SUPABASE_SETUP.md](./SUPABASE_SETUP.md)
 2. **Criar arquivo .env** com as credenciais do Supabase:
 ```env
 REACT_APP_SUPABASE_URL=https://seu-projeto.supabase.co
@@ -128,7 +127,3 @@ npm test
 - A sessão persiste mesmo após fechar o navegador
 - As imagens são armazenadas no Supabase Storage
 - Cada usuário (CPF) tem sua própria pasta isolada de imagens
-
-## Configuração do Supabase
-
-Para que a aplicação funcione completamente, é necessário configurar o Supabase. Consulte o arquivo [SUPABASE_SETUP.md](./SUPABASE_SETUP.md) para instruções detalhadas.
