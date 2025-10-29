@@ -60,7 +60,7 @@ src/
 
 ### Pré-requisitos
 
-2. **Criar arquivo .env** com as credenciais do Supabase:
+1. **Criar arquivo .env** com as credenciais do Supabase:
 ```env
 REACT_APP_SUPABASE_URL=https://seu-projeto.supabase.co
 REACT_APP_SUPABASE_ANON_KEY=sua-chave-anon-key
