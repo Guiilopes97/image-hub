@@ -272,9 +272,19 @@ export const invalidateUserImagesCache = (cpf?: string): void => {
     }
     // Limpar requisição pendente se houver
     pendingRequests.delete(cpf);
+    // Limpar cache de listUserImages para este CPF
+    const keysToDelete: string[] = [];
+    listUserImagesCache.forEach((_, key) => {
+      if (key.startsWith(`${cpf}-`)) {
+        keysToDelete.push(key);
+      }
+    });
+    keysToDelete.forEach(key => listUserImagesCache.delete(key));
   } else {
     userImagesCache = null; // Invalidar para todos os usuários
     pendingRequests.clear(); // Limpar todas as requisições pendentes
+    listUserImagesCache.clear(); // Limpar cache de listas
+    listUserImagesPending.clear(); // Limpar requisições pendentes de listas
   }
 };
 
@@ -453,6 +463,13 @@ export const canUploadImages = async (
 };
 
 /**
+ * Cache para requisições de listUserImages (páginadas)
+ */
+let listUserImagesCache: Map<string, { data: any[]; timestamp: number }> = new Map();
+let listUserImagesPending: Map<string, Promise<any[]>> = new Map();
+const LIST_CACHE_TTL = 2000; // 2 segundos para requisições de lista
+
+/**
  * Lista todas as imagens de um CPF com seus links únicos
  */
 export const listUserImages = async (
@@ -460,64 +477,123 @@ export const listUserImages = async (
   limit: number = 20,
   offset: number = 0
 ): Promise<Array<{ url: string; thumbUrl: string; uniqueId: string; filename: string }>> => {
-  try {
-    const { data, error } = await supabase.storage
-      .from('images')
-      .list(cpf, {
-        limit,
-        offset,
-        sortBy: { column: 'created_at', order: 'desc' }
+  // Gerar chave única para cache baseada nos parâmetros
+  const cacheKey = `${cpf}-${limit}-${offset}`;
+  
+  // Verificar cache primeiro
+  const cached = listUserImagesCache.get(cacheKey);
+  if (cached) {
+    const age = Date.now() - cached.timestamp;
+    if (age < LIST_CACHE_TTL) {
+      // Retornar do cache, mas regenerar URLs (que são apenas processamento)
+      return cached.data.map(file => {
+        const filePath = `${cpf}/${file.name}`;
+        const { data: publicUrlData } = supabase.storage
+          .from('images')
+          .getPublicUrl(filePath);
+        const { data: thumbUrlData } = supabase.storage
+          .from('images')
+          .getPublicUrl(filePath, {
+            transform: {
+              width: 400,
+              height: 300,
+              resize: 'cover',
+              quality: 70
+            }
+          });
+        
+        const uniqueId = btoa(`${cpf}-${file.name}`).replace(/\//g, '-').replace(/\+/g, '_').replace(/=/g, '');
+        
+        return {
+          url: publicUrlData.publicUrl,
+          thumbUrl: thumbUrlData.publicUrl,
+          uniqueId,
+          filename: file.name
+        };
       });
-
-    if (error) {
-      return [];
     }
-
-    if (!data || data.length === 0) {
-      return [];
-    }
-
-    // Gerar URLs públicas e links únicos (usando base64 para ser determinístico)
-    const images = data.map((file) => {
-      const filePath = `${cpf}/${file.name}`;
-      const { data: publicUrlData } = supabase.storage
-        .from('images')
-        .getPublicUrl(filePath);
-      // URL transformada para miniatura (menor resolução)
-      const { data: thumbUrlData } = supabase.storage
-        .from('images')
-        .getPublicUrl(filePath, {
-          transform: {
-            width: 400,
-            height: 300,
-            resize: 'cover',
-            quality: 70
-          }
-        });
-      
-      // Gerar uniqueId baseado em base64 (mesmo método do upload)
-      const uniqueId = btoa(`${cpf}-${file.name}`).replace(/\//g, '-').replace(/\+/g, '_').replace(/=/g, '');
-      
-      // Salvar no localStorage como backup
-      saveImageLink({
-        uniqueId,
-        cpf,
-        filename: file.name,
-        createdAt: Date.now()
-      });
-      
-      return {
-        url: publicUrlData.publicUrl,
-        thumbUrl: thumbUrlData.publicUrl,
-        uniqueId,
-        filename: file.name
-      };
-    });
-
-    return images;
-  } catch (error) {
-    return [];
   }
+
+  // Verificar se já existe uma requisição em andamento com os mesmos parâmetros
+  const pendingRequest = listUserImagesPending.get(cacheKey);
+  if (pendingRequest) {
+    return pendingRequest;
+  }
+
+  // Criar nova requisição
+  const request = (async () => {
+    try {
+      const { data, error } = await supabase.storage
+        .from('images')
+        .list(cpf, {
+          limit,
+          offset,
+          sortBy: { column: 'created_at', order: 'desc' }
+        });
+
+      if (error) {
+        return [];
+      }
+
+      if (!data || data.length === 0) {
+        return [];
+      }
+
+      // Salvar no cache (apenas os dados brutos do Supabase)
+      listUserImagesCache.set(cacheKey, {
+        data: data,
+        timestamp: Date.now()
+      });
+
+      // Gerar URLs públicas e links únicos (usando base64 para ser determinístico)
+      const images = data.map((file) => {
+        const filePath = `${cpf}/${file.name}`;
+        const { data: publicUrlData } = supabase.storage
+          .from('images')
+          .getPublicUrl(filePath);
+        // URL transformada para miniatura (menor resolução)
+        const { data: thumbUrlData } = supabase.storage
+          .from('images')
+          .getPublicUrl(filePath, {
+            transform: {
+              width: 400,
+              height: 300,
+              resize: 'cover',
+              quality: 70
+            }
+          });
+        
+        // Gerar uniqueId baseado em base64 (mesmo método do upload)
+        const uniqueId = btoa(`${cpf}-${file.name}`).replace(/\//g, '-').replace(/\+/g, '_').replace(/=/g, '');
+        
+        // Salvar no localStorage como backup
+        saveImageLink({
+          uniqueId,
+          cpf,
+          filename: file.name,
+          createdAt: Date.now()
+        });
+        
+        return {
+          url: publicUrlData.publicUrl,
+          thumbUrl: thumbUrlData.publicUrl,
+          uniqueId,
+          filename: file.name
+        };
+      });
+
+      return images;
+    } catch (error) {
+      return [];
+    } finally {
+      // Remover da lista de requisições pendentes
+      listUserImagesPending.delete(cacheKey);
+    }
+  })();
+
+  // Armazenar a promessa para outras chamadas simultâneas
+  listUserImagesPending.set(cacheKey, request);
+  return request;
 };
 
 /**

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { listUserImages, deleteImage, deleteMultipleImages, countUserImages } from '../services/imageService';
 
@@ -27,9 +27,14 @@ const ImageGallery: React.FC<ImageGalleryProps> = ({ onDeleteSuccess }) => {
   const [totalImages, setTotalImages] = useState<number | null>(null);
   const [selectedMap, setSelectedMap] = useState<Record<string, string>>({}); // uniqueId -> filename
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
+  const loadingRef = useRef(false); // Ref para evitar chamadas duplicadas
 
   const loadImages = useCallback(async () => {
     if (!cpf) return;
+    
+    // Evitar chamadas duplicadas simultâneas
+    if (loadingRef.current) return;
+    loadingRef.current = true;
     
     setLoading(true);
     setFailedImages(new Set<string>()); // Resetar imagens com falha
@@ -75,6 +80,7 @@ const ImageGallery: React.FC<ImageGalleryProps> = ({ onDeleteSuccess }) => {
       setHasMore(false);
     } finally {
       setLoading(false);
+      loadingRef.current = false;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cpf, currentPage, itemsPerPage]);
