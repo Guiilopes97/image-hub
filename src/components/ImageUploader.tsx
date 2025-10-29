@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { uploadMultipleImages } from '../services/imageService';
+import { uploadImage } from '../services/imageService';
 
 interface ImageUploaderProps {
   onUploadSuccess?: () => void;
@@ -11,6 +11,7 @@ const ImageUploader: React.FC<ImageUploaderProps> = ({ onUploadSuccess }) => {
   const [isDragging, setIsDragging] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<string>('');
+  const [uploadPercentage, setUploadPercentage] = useState<number>(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleDragEnter = (e: React.DragEvent) => {
@@ -55,18 +56,37 @@ const ImageUploader: React.FC<ImageUploaderProps> = ({ onUploadSuccess }) => {
       return;
     }
 
+    if (imageFiles.length > 10) {
+      alert('Por favor, selecione no máximo 10 imagens por vez.');
+      return;
+    }
+
     if (!cpf) {
       alert('Erro: CPF não identificado');
       return;
     }
 
     setIsProcessing(true);
-    setUploadProgress(`Uploading ${imageFiles.length} imagem(ns)...`);
+    setUploadProgress(`Preparando upload de ${imageFiles.length} imagem(ns)...`);
+    setUploadPercentage(0);
 
     try {
-      const results = await uploadMultipleImages(imageFiles, cpf);
+      const results: Array<{ url: string; uniqueId: string; filename: string }> = [];
+      
+      // Fazer upload sequencial para rastrear progresso
+      for (let i = 0; i < imageFiles.length; i++) {
+        const percentage = Math.round(((i + 1) / imageFiles.length) * 100);
+        setUploadPercentage(percentage);
+        setUploadProgress(`Enviando imagem ${i + 1} de ${imageFiles.length}...`);
+        
+        const result = await uploadImage(imageFiles[i], cpf);
+        if (result) {
+          results.push(result);
+        }
+      }
       
       if (results.length > 0) {
+        setUploadPercentage(100);
         setUploadProgress(`Sucesso! ${results.length} imagem(ns) enviada(s).`);
         // Limpar o input
         if (fileInputRef.current) {
@@ -77,6 +97,7 @@ const ImageUploader: React.FC<ImageUploaderProps> = ({ onUploadSuccess }) => {
         setTimeout(() => {
           setIsProcessing(false);
           setUploadProgress('');
+          setUploadPercentage(0);
           if (onUploadSuccess) {
             onUploadSuccess();
           }
@@ -84,11 +105,13 @@ const ImageUploader: React.FC<ImageUploaderProps> = ({ onUploadSuccess }) => {
       } else {
         setIsProcessing(false);
         setUploadProgress('');
+        setUploadPercentage(0);
         alert('Erro ao fazer upload das imagens. Verifique sua conexão com o Supabase.');
       }
     } catch (error) {
       setIsProcessing(false);
       setUploadProgress('');
+      setUploadPercentage(0);
       alert('Erro ao fazer upload. Por favor, tente novamente.');
     }
   };
@@ -144,11 +167,22 @@ const ImageUploader: React.FC<ImageUploaderProps> = ({ onUploadSuccess }) => {
           </div>
           
           {isProcessing ? (
-            <div>
-              <div className="flex justify-center mb-3">
-                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+            <div className="w-full">
+              <div className="mb-4">
+                <div className="flex justify-between items-center mb-2">
+                  <span className="text-sm font-medium text-gray-700">{uploadProgress}</span>
+                  <span className="text-sm font-semibold text-blue-600">{uploadPercentage}%</span>
+                </div>
+                <div className="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
+                  <div 
+                    className="bg-blue-600 h-full rounded-full transition-all duration-300 ease-out"
+                    style={{ width: `${uploadPercentage}%` }}
+                  ></div>
+                </div>
               </div>
-              <p className="text-gray-600 font-medium">{uploadProgress}</p>
+              <div className="flex justify-center">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+              </div>
             </div>
           ) : (
             <>
@@ -156,7 +190,8 @@ const ImageUploader: React.FC<ImageUploaderProps> = ({ onUploadSuccess }) => {
                 <p className="text-gray-700 font-semibold text-lg mb-1">
                   Arraste e solte suas imagens aqui
                 </p>
-                <p className="text-gray-500 text-sm">ou clique para selecionar</p>
+                <p className="text-gray-500 text-sm mb-1">ou clique para selecionar</p>
+                <p className="text-gray-400 text-xs mt-2">Máximo de 10 imagens por upload</p>
               </div>
               
               <div className="flex justify-center">

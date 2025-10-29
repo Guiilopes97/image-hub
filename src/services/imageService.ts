@@ -1,4 +1,5 @@
 import { supabase } from '../config/supabase';
+import imageCompression from 'browser-image-compression';
 
 export interface ImageData {
   id: string;
@@ -73,12 +74,62 @@ export const getImageLink = (uniqueId: string): ImageLink | null => {
 };
 
 /**
+ * Comprime uma imagem mantendo boa qualidade
+ */
+const compressImage = async (file: File): Promise<File> => {
+  try {
+    // Regras:
+    // - Converter sempre para WebP (mantém qualidade com melhor compressão e suporta transparência)
+    // - Nunca manter formato original por ser pequeno (convertSize: 0)
+    // - Reduzir dimensões máximas (2048px) para economizar espaço quando necessário
+    const options = {
+      maxSizeMB: 2,
+      maxWidthOrHeight: 2048,
+      useWebWorker: true,
+      initialQuality: 0.9,
+      fileType: 'image/webp',
+      convertSize: 0, // força conversão mesmo para arquivos pequenos
+    };
+
+    // Para JPEGs pequenos e já na resolução alvo, podemos manter original
+    // Mas para PNGs e outros formatos, sempre converter para WebP
+    if (
+      file.type === 'image/jpeg' &&
+      file.size <= 800 * 1024 // ~800KB
+    ) {
+      try {
+        const img = await createImageBitmap(file);
+        if (img.width <= 2048 && img.height <= 2048) {
+          return file;
+        }
+      } catch (_) {
+        // se falhar leitura, segue com compressão
+      }
+    }
+
+    const compressedFile = await imageCompression(file, options);
+    return compressedFile;
+  } catch (error) {
+    // Se houver erro na compressão, retorna o arquivo original
+    return file;
+  }
+};
+
+/**
  * Faz upload de uma imagem para o Supabase Storage e retorna informações com link único
  */
 export const uploadImage = async (file: File, cpf: string): Promise<{ url: string; uniqueId: string; filename: string } | null> => {
   try {
-    const fileExt = file.name.split('.').pop();
-    const fileName = `${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
+    // Comprimir imagem antes do upload
+    const compressedFile = await compressImage(file);
+    
+    // Ajustar a extensão conforme o MIME final (preferência WebP)
+    const originalExt = file.name.split('.').pop()?.toLowerCase();
+    let finalExt = originalExt || 'webp';
+    if (compressedFile.type === 'image/webp') finalExt = 'webp';
+    else if (compressedFile.type === 'image/jpeg') finalExt = 'jpg';
+    else if (compressedFile.type === 'image/png') finalExt = 'png';
+    const fileName = `${Date.now()}-${Math.random().toString(36).substring(7)}.${finalExt}`;
     const filePath = `${cpf}/${fileName}`;
     
     // Gerar ID único codificado (CPF e filename em base64)
@@ -88,7 +139,7 @@ export const uploadImage = async (file: File, cpf: string): Promise<{ url: strin
 
     const { error: uploadError } = await supabase.storage
       .from('images')
-      .upload(filePath, file, {
+      .upload(filePath, compressedFile, {
         cacheControl: '3600',
         upsert: false
       });
