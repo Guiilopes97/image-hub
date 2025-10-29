@@ -87,7 +87,6 @@ const ImageUploader: React.FC<ImageUploaderProps> = ({ onUploadSuccess }) => {
         alert('Erro ao fazer upload das imagens. Verifique sua conexão com o Supabase.');
       }
     } catch (error) {
-      console.error('Erro ao fazer upload:', error);
       setIsProcessing(false);
       setUploadProgress('');
       alert('Erro ao fazer upload. Por favor, tente novamente.');

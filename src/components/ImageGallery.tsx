@@ -1,10 +1,10 @@
-import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { listUserImages, deleteImage } from '../services/imageService';
+import { listUserImages, deleteImage, countUserImages } from '../services/imageService';
 
 interface ImageInfo {
   url: string;
+  thumbUrl: string;
   filename: string;
   uniqueId: string;
   projectUrl: string;
@@ -12,26 +12,42 @@ interface ImageInfo {
 
 const ImageGallery: React.FC = () => {
   const { cpf } = useAuth();
-  const navigate = useNavigate();
   const [images, setImages] = useState<ImageInfo[]>([]);
   const [loading, setLoading] = useState(false);
   const [deletingId, setDeletingId] = useState<number | null>(null);
-  const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
-  const [failedImages, setFailedImages] = useState<Set<number>>(new Set());
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [failedImages, setFailedImages] = useState<Set<string>>(new Set());
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(20);
+  const [hasMore, setHasMore] = useState(false);
+  const [totalImages, setTotalImages] = useState<number | null>(null);
 
-  const loadImages = async () => {
+  const loadImages = useCallback(async () => {
     if (!cpf) return;
     
     setLoading(true);
-    setFailedImages(new Set()); // Resetar imagens com falha
+    setFailedImages(new Set<string>()); // Resetar imagens com falha
     try {
-      const imageUrls = await listUserImages(cpf);
-      console.log('URLs carregadas:', imageUrls);
+      const offset = (currentPage - 1) * itemsPerPage;
+      
+      // Carregar total na primeira página (o totalImages será atualizado após o await)
+      let shouldLoadTotal = currentPage === 1;
+      
+      // Fazer ambas as chamadas em paralelo se precisar carregar total
+      const [totalResult, imageUrls] = await Promise.all([
+        shouldLoadTotal ? countUserImages(cpf) : Promise.resolve(null),
+        listUserImages(cpf, itemsPerPage, offset)
+      ]);
+      
+      if (shouldLoadTotal && totalResult !== null) {
+        setTotalImages(totalResult);
+      }
       
       const imageData: ImageInfo[] = imageUrls.map(img => {
         const projectUrl = `${window.location.origin}/image/${img.uniqueId}`;
         return { 
-          url: img.url, 
+          url: img.url,
+          thumbUrl: img.thumbUrl,
           filename: img.filename, 
           uniqueId: img.uniqueId,
           projectUrl 
@@ -39,51 +55,115 @@ const ImageGallery: React.FC = () => {
       });
       
       setImages(imageData);
+      setHasMore(imageData.length === itemsPerPage);
     } catch (error) {
-      console.error('Erro ao carregar imagens:', error);
+      // Erro silencioso
+      setHasMore(false);
     } finally {
       setLoading(false);
     }
-  };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cpf, currentPage, itemsPerPage]);
 
   useEffect(() => {
     loadImages();
-  }, [cpf]);
+  }, [loadImages]);
 
-  const handleDelete = async (index: number, filename: string) => {
+  const handleDelete = async (displayIndex: number, filename: string) => {
     if (!cpf || !window.confirm('Tem certeza que deseja excluir esta imagem?')) {
       return;
     }
     
-    setDeletingId(index);
+    setDeletingId(displayIndex);
     try {
       const success = await deleteImage(cpf, filename);
       if (success) {
-        setImages(images.filter((_, i) => i !== index));
+        // Atualizar total e remover imagem da lista atual
+        if (totalImages !== null && totalImages > 0) {
+          setTotalImages(totalImages - 1);
+        }
+        setImages(images.filter((_, i) => i !== displayIndex));
+        
+        // Ajustar página se necessário
+        if (totalImages !== null) {
+          const newTotal = totalImages - 1;
+          const totalPages = Math.ceil(newTotal / itemsPerPage);
+          if (currentPage > totalPages && totalPages > 0) {
+            setCurrentPage(totalPages);
+          } else if (images.length === 1 && currentPage > 1) {
+            // Se era a última imagem da página e ainda há páginas anteriores, voltar
+            setCurrentPage(currentPage - 1);
+          }
+        }
       } else {
         alert('Erro ao excluir imagem');
       }
     } catch (error) {
-      console.error('Erro ao excluir:', error);
       alert('Erro ao excluir imagem');
     } finally {
       setDeletingId(null);
     }
   };
 
-  const handleCopyLink = async (projectUrl: string, index: number) => {
+  const handleCopyLink = async (projectUrl: string, uniqueId: string) => {
     try {
       await navigator.clipboard.writeText(projectUrl);
-      setCopiedIndex(index);
-      setTimeout(() => setCopiedIndex(null), 2000);
+      setCopiedId(uniqueId);
+      setTimeout(() => setCopiedId(null), 2000);
     } catch (error) {
-      console.error('Erro ao copiar link:', error);
       alert('Erro ao copiar link');
     }
   };
 
   const handleOpenInNewTab = (projectUrl: string) => {
     window.open(projectUrl, '_blank', 'noopener,noreferrer');
+  };
+
+  // Calcular informações de paginação
+  const totalPages = totalImages !== null ? Math.ceil(totalImages / itemsPerPage) : null;
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const startItem = images.length > 0 ? startIndex + 1 : 0;
+  const endItem = startIndex + images.length;
+
+  // Ao mudar itemsPerPage, volta para a primeira página
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [itemsPerPage]);
+  
+  // Recarregar total quando mudar itemsPerPage ou quando for primeira página sem total
+  useEffect(() => {
+    if (cpf && (currentPage === 1 || totalImages === null)) {
+      countUserImages(cpf).then(total => {
+        setTotalImages(total);
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cpf, itemsPerPage]);
+
+  const handleItemsPerPageChange = (value: number) => {
+    setItemsPerPage(value);
+    setCurrentPage(1); // Resetar para primeira página ao mudar itens por página
+  };
+
+  const handlePrev = () => {
+    if (currentPage > 1) {
+      setCurrentPage(currentPage - 1);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  };
+  
+  const handleNext = () => {
+    if (hasMore) {
+      setCurrentPage(currentPage + 1);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  };
+
+  const handlePageChange = (page: number) => {
+    if (totalPages !== null && page >= 1 && page <= totalPages) {
+      setCurrentPage(page);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
   };
 
   if (loading) {
@@ -118,17 +198,47 @@ const ImageGallery: React.FC = () => {
 
   return (
     <div className="bg-white rounded-lg shadow-lg p-6">
-      <div className="flex justify-between items-center mb-4">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-4">
         <h2 className="text-2xl font-semibold text-gray-800">Galeria de Imagens</h2>
-        <button onClick={loadImages} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors text-sm">
-          Atualizar
-        </button>
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2">
+            <label htmlFor="itemsPerPage" className="text-sm text-gray-700 font-medium">
+              Itens por página:
+            </label>
+            <select
+              id="itemsPerPage"
+              value={itemsPerPage}
+              onChange={(e) => handleItemsPerPageChange(Number(e.target.value))}
+              className="px-3 py-1 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value={10}>10</option>
+              <option value={20}>20</option>
+              <option value={30}>30</option>
+              <option value={40}>40</option>
+              <option value={50}>50</option>
+            </select>
+          </div>
+          <button onClick={loadImages} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors text-sm">
+            Atualizar
+          </button>
+        </div>
       </div>
       
-      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+      {/* Informação de paginação */}
+      {images.length > 0 && (
+        <div className="mb-4 text-sm text-gray-600">
+          {totalImages !== null ? (
+            <>Mostrando {startItem} - {endItem} de {totalImages} imagens</>
+          ) : (
+            <>Mostrando {startItem} - {endItem}</>
+          )}
+        </div>
+      )}
+      
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 mb-6">
         {images.map((imageData, index) => (
-          <div key={index} className="relative group">
-            {failedImages.has(index) ? (
+          <div key={imageData.uniqueId} className="relative group">
+            {failedImages.has(imageData.uniqueId) ? (
               <div className="w-full h-48 bg-gray-200 rounded-lg shadow-md flex items-center justify-center">
                 <div className="text-center text-gray-500">
                   <svg className="w-12 h-12 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -139,19 +249,21 @@ const ImageGallery: React.FC = () => {
               </div>
             ) : (
               <img
-                src={imageData.url}
+                src={imageData.thumbUrl || imageData.url}
                 alt={imageData.filename}
                 className="w-full h-48 object-cover rounded-lg shadow-md cursor-pointer transition-transform duration-200 group-hover:scale-105"
-                onClick={() => handleOpenInNewTab(imageData.projectUrl)}
-                onError={(e) => {
-                  console.error('Erro ao carregar imagem:', imageData.url);
-                  console.error('Filename:', imageData.filename);
-                  setFailedImages(prev => new Set(prev).add(index));
-                }}
-                onLoad={() => {
-                  console.log('Imagem carregada com sucesso:', imageData.filename);
-                }}
-                loading="lazy"
+              onClick={() => handleOpenInNewTab(imageData.projectUrl)}
+              onError={() => {
+                // Se falhar a miniatura, tentar o original; se falhar novamente, marcar como falha
+                const imgEl = document.querySelector(`img[data-id='${imageData.uniqueId}']`) as HTMLImageElement | null;
+                if (imgEl && imgEl.src !== imageData.url) {
+                  imgEl.src = imageData.url;
+                } else {
+                  setFailedImages(prev => new Set(prev).add(imageData.uniqueId));
+                }
+              }}
+              data-id={imageData.uniqueId}
+              loading="lazy"
               />
             )}
             
@@ -159,12 +271,12 @@ const ImageGallery: React.FC = () => {
               <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  handleCopyLink(imageData.projectUrl, index);
+                  handleCopyLink(imageData.projectUrl, imageData.uniqueId);
                 }}
-                className={`p-2 rounded-full transition-colors ${copiedIndex === index ? 'bg-green-600' : 'bg-blue-600 hover:bg-blue-700'} text-white`}
+                className={`p-2 rounded-full transition-colors ${copiedId === imageData.uniqueId ? 'bg-green-600' : 'bg-blue-600 hover:bg-blue-700'} text-white`}
                 title="Copiar link"
               >
-                {copiedIndex === index ? (
+                {copiedId === imageData.uniqueId ? (
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                   </svg>
@@ -207,7 +319,7 @@ const ImageGallery: React.FC = () => {
               </button>
             </div>
 
-            {copiedIndex === index && (
+            {copiedId === imageData.uniqueId && (
               <div className="absolute bottom-2 left-2 bg-green-600 text-white px-3 py-1 rounded-lg text-sm font-medium">
                 Link copiado!
               </div>
@@ -215,6 +327,115 @@ const ImageGallery: React.FC = () => {
           </div>
         ))}
       </div>
+
+      {/* Controles de paginação */}
+      {totalPages !== null && totalPages > 1 && (
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-4 mt-6 pt-6 border-t border-gray-200">
+          <div className="text-sm text-gray-600">
+            Página {currentPage} de {totalPages}
+          </div>
+          
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handlePrev}
+              disabled={currentPage === 1}
+              className="px-4 py-2 bg-gray-200 hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed text-gray-700 rounded-lg transition-colors text-sm font-medium"
+            >
+              Anterior
+            </button>
+            
+            {/* Números de página */}
+            <div className="flex items-center gap-1">
+              {/* Primeira página */}
+              {currentPage > 3 && totalPages > 5 && (
+                <>
+                  <button
+                    onClick={() => handlePageChange(1)}
+                    className="px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg transition-colors text-sm"
+                  >
+                    1
+                  </button>
+                  {currentPage > 4 && <span className="px-2 text-gray-500">...</span>}
+                </>
+              )}
+              
+              {/* Páginas ao redor da atual */}
+              {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                let pageNum: number;
+                if (totalPages <= 5) {
+                  pageNum = i + 1;
+                } else if (currentPage <= 3) {
+                  pageNum = i + 1;
+                } else if (currentPage >= totalPages - 2) {
+                  pageNum = totalPages - 4 + i;
+                } else {
+                  pageNum = currentPage - 2 + i;
+                }
+                
+                return (
+                  <button
+                    key={pageNum}
+                    onClick={() => handlePageChange(pageNum)}
+                    className={`px-3 py-2 rounded-lg transition-colors text-sm font-medium ${
+                      currentPage === pageNum
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+                    }`}
+                  >
+                    {pageNum}
+                  </button>
+                );
+              })}
+              
+              {/* Última página */}
+              {currentPage < totalPages - 2 && totalPages > 5 && (
+                <>
+                  {currentPage < totalPages - 3 && <span className="px-2 text-gray-500">...</span>}
+                  <button
+                    onClick={() => handlePageChange(totalPages)}
+                    className="px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg transition-colors text-sm"
+                  >
+                    {totalPages}
+                  </button>
+                </>
+              )}
+            </div>
+            
+            <button
+              onClick={handleNext}
+              disabled={!hasMore || (totalPages !== null && currentPage >= totalPages)}
+              className="px-4 py-2 bg-gray-200 hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed text-gray-700 rounded-lg transition-colors text-sm font-medium"
+            >
+              Próxima
+            </button>
+          </div>
+        </div>
+      )}
+      
+      {/* Controles simplificados se não houver total ainda ou só uma página */}
+      {totalPages === null && (currentPage > 1 || hasMore) && (
+        <div className="flex items-center justify-between gap-4 mt-6 pt-6 border-t border-gray-200">
+          <div className="text-sm text-gray-600">
+            Página {currentPage}
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handlePrev}
+              disabled={currentPage === 1}
+              className="px-4 py-2 bg-gray-200 hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed text-gray-700 rounded-lg transition-colors text-sm font-medium"
+            >
+              Anterior
+            </button>
+            <button
+              onClick={handleNext}
+              disabled={!hasMore}
+              className="px-4 py-2 bg-gray-200 hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed text-gray-700 rounded-lg transition-colors text-sm font-medium"
+            >
+              Próxima
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

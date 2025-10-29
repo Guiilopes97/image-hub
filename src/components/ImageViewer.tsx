@@ -48,7 +48,6 @@ const ImageViewer: React.FC = () => {
           setError('Imagem não encontrada');
         }
       } catch (err) {
-        console.error('Erro ao carregar imagem:', err);
         setError('Erro ao carregar imagem');
       } finally {
         setLoading(false);

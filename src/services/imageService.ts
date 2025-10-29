@@ -24,7 +24,7 @@ const saveImageLink = (link: ImageLink): void => {
     existingLinks[link.uniqueId] = link;
     localStorage.setItem('imageHubLinks', JSON.stringify(existingLinks));
   } catch (error) {
-    console.error('Erro ao salvar link:', error);
+    // Erro silencioso
   }
 };
 
@@ -36,7 +36,6 @@ const getImageLinks = (): Record<string, ImageLink> => {
     const links = localStorage.getItem('imageHubLinks');
     return links ? JSON.parse(links) : {};
   } catch (error) {
-    console.error('Erro ao recuperar links:', error);
     return {};
   }
 };
@@ -62,7 +61,6 @@ export const getImageLink = (uniqueId: string): ImageLink | null => {
       };
     }
   } catch (error) {
-    console.error('Erro ao decodificar link único:', error);
     // Se falhar, tentar no localStorage (backup)
     const links = getImageLinks();
     const link = links[uniqueId];
@@ -96,7 +94,6 @@ export const uploadImage = async (file: File, cpf: string): Promise<{ url: strin
       });
 
     if (uploadError) {
-      console.error('Erro ao fazer upload:', uploadError);
       return null;
     }
 
@@ -118,7 +115,6 @@ export const uploadImage = async (file: File, cpf: string): Promise<{ url: strin
       filename: fileName
     };
   } catch (error) {
-    console.error('Erro ao processar upload:', error);
     return null;
   }
 };
@@ -133,20 +129,45 @@ export const uploadMultipleImages = async (files: File[], cpf: string): Promise<
 };
 
 /**
- * Lista todas as imagens de um CPF com seus links únicos
+ * Conta o total de imagens de um CPF
  */
-export const listUserImages = async (cpf: string): Promise<Array<{ url: string; uniqueId: string; filename: string }>> => {
+export const countUserImages = async (cpf: string): Promise<number> => {
   try {
     const { data, error } = await supabase.storage
       .from('images')
       .list(cpf, {
-        limit: 100,
-        offset: 0,
+        limit: 1000, // Limite máximo prático do Supabase
+        offset: 0
+      });
+
+    if (error || !data) {
+      return 0;
+    }
+
+    return data.length;
+  } catch (error) {
+    return 0;
+  }
+};
+
+/**
+ * Lista todas as imagens de um CPF com seus links únicos
+ */
+export const listUserImages = async (
+  cpf: string,
+  limit: number = 20,
+  offset: number = 0
+): Promise<Array<{ url: string; thumbUrl: string; uniqueId: string; filename: string }>> => {
+  try {
+    const { data, error } = await supabase.storage
+      .from('images')
+      .list(cpf, {
+        limit,
+        offset,
         sortBy: { column: 'created_at', order: 'desc' }
       });
 
     if (error) {
-      console.error('Erro ao listar imagens:', error);
       return [];
     }
 
@@ -154,14 +175,23 @@ export const listUserImages = async (cpf: string): Promise<Array<{ url: string; 
       return [];
     }
 
-    console.log('Arquivos encontrados:', data);
-
     // Gerar URLs públicas e links únicos (usando base64 para ser determinístico)
     const images = data.map((file) => {
       const filePath = `${cpf}/${file.name}`;
       const { data: publicUrlData } = supabase.storage
         .from('images')
         .getPublicUrl(filePath);
+      // URL transformada para miniatura (menor resolução)
+      const { data: thumbUrlData } = supabase.storage
+        .from('images')
+        .getPublicUrl(filePath, {
+          transform: {
+            width: 400,
+            height: 300,
+            resize: 'cover',
+            quality: 70
+          }
+        });
       
       // Gerar uniqueId baseado em base64 (mesmo método do upload)
       const uniqueId = btoa(`${cpf}-${file.name}`).replace(/\//g, '-').replace(/\+/g, '_').replace(/=/g, '');
@@ -176,15 +206,14 @@ export const listUserImages = async (cpf: string): Promise<Array<{ url: string; 
       
       return {
         url: publicUrlData.publicUrl,
+        thumbUrl: thumbUrlData.publicUrl,
         uniqueId,
         filename: file.name
       };
     });
 
-    console.log('Total de imagens listadas:', images.length);
     return images;
   } catch (error) {
-    console.error('Erro ao processar listagem:', error);
     return [];
   }
 };
@@ -200,7 +229,6 @@ export const deleteImage = async (cpf: string, fileName: string): Promise<boolea
       .remove([filePath]);
 
     if (error) {
-      console.error('Erro ao deletar imagem:', error);
       return false;
     }
 
@@ -217,7 +245,6 @@ export const deleteImage = async (cpf: string, fileName: string): Promise<boolea
 
     return true;
   } catch (error) {
-    console.error('Erro ao processar exclusão:', error);
     return false;
   }
 };
