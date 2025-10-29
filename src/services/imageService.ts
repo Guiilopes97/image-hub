@@ -187,6 +187,9 @@ export const uploadImage = async (file: File, cpf: string, checkLimits: boolean 
       createdAt: Date.now()
     });
 
+    // Invalidar cache após upload
+    invalidateUserImagesCache(cpf);
+
     return {
       url: data.publicUrl,
       uniqueId,
@@ -207,56 +210,128 @@ export const uploadMultipleImages = async (files: File[], cpf: string): Promise<
 };
 
 /**
+ * Função auxiliar que busca os dados das imagens uma única vez
+ * Reutilizada por countUserImages e getUserStorageUsage para evitar requisições duplicadas
+ */
+let userImagesCache: { cpf: string; data: any[]; timestamp: number } | null = null;
+const CACHE_TTL = 5000; // Cache por 5 segundos
+let pendingRequests: Map<string, Promise<any[]>> = new Map();
+
+const fetchUserImagesList = async (cpf: string, useCache: boolean = true): Promise<any[]> => {
+  // Verificar cache primeiro
+  if (useCache && userImagesCache && userImagesCache.cpf === cpf) {
+    const age = Date.now() - userImagesCache.timestamp;
+    if (age < CACHE_TTL) {
+      return userImagesCache.data;
+    }
+  }
+
+  // Verificar se já existe uma requisição em andamento para este CPF
+  const pendingRequest = pendingRequests.get(cpf);
+  if (pendingRequest) {
+    return pendingRequest;
+  }
+
+  // Criar nova requisição e armazenar
+  const request = (async () => {
+    try {
+      const { data, error } = await supabase.storage
+        .from('images')
+        .list(cpf, {
+          limit: 1000, // Limite máximo prático do Supabase
+          offset: 0
+        });
+
+      if (error || !data) {
+        return [];
+      }
+
+      // Atualizar cache
+      userImagesCache = { cpf, data, timestamp: Date.now() };
+      return data;
+    } catch (error) {
+      return [];
+    } finally {
+      // Remover da lista de requisições pendentes
+      pendingRequests.delete(cpf);
+    }
+  })();
+
+  // Armazenar a promessa para outras chamadas simultâneas
+  pendingRequests.set(cpf, request);
+  return request;
+};
+
+/**
+ * Invalida o cache de imagens do usuário (útil após uploads/deleções)
+ */
+export const invalidateUserImagesCache = (cpf?: string): void => {
+  if (cpf) {
+    if (userImagesCache && userImagesCache.cpf === cpf) {
+      userImagesCache = null;
+    }
+    // Limpar requisição pendente se houver
+    pendingRequests.delete(cpf);
+  } else {
+    userImagesCache = null; // Invalidar para todos os usuários
+    pendingRequests.clear(); // Limpar todas as requisições pendentes
+  }
+};
+
+/**
  * Conta o total de imagens de um CPF
  */
 export const countUserImages = async (cpf: string): Promise<number> => {
-  try {
-    const { data, error } = await supabase.storage
-      .from('images')
-      .list(cpf, {
-        limit: 1000, // Limite máximo prático do Supabase
-        offset: 0
-      });
-
-    if (error || !data) {
-      return 0;
-    }
-
-    return data.length;
-  } catch (error) {
-    return 0;
-  }
+  const data = await fetchUserImagesList(cpf);
+  return data.length;
 };
 
 /**
  * Calcula o espaço de armazenamento usado por um usuário em MB
  */
 export const getUserStorageUsage = async (cpf: string): Promise<{ usedMB: number; usedBytes: number; fileCount: number }> => {
-  try {
-    const { data, error } = await supabase.storage
-      .from('images')
-      .list(cpf, {
-        limit: 1000,
-        offset: 0
-      });
+  const data = await fetchUserImagesList(cpf);
 
-    if (error || !data) {
-      return { usedMB: 0, usedBytes: 0, fileCount: 0 };
-    }
-
-    // Calcular tamanho total (os arquivos retornam metadata com size)
-    const totalBytes = data.reduce((sum, file) => {
-      // Tamanho pode vir em metadata.size ou em bytes direto
-      const size = (file.metadata?.size) || (file as any).size || 0;
-      return sum + size;
-    }, 0);
-    
-    const usedMB = totalBytes / (1024 * 1024); // Converter para MB
-
-    return { usedMB, usedBytes: totalBytes, fileCount: data.length };
-  } catch (error) {
+  if (data.length === 0) {
     return { usedMB: 0, usedBytes: 0, fileCount: 0 };
   }
+
+  // Calcular tamanho total (os arquivos retornam metadata com size)
+  const totalBytes = data.reduce((sum, file) => {
+    // Tamanho pode vir em metadata.size ou em bytes direto
+    const size = (file.metadata?.size) || (file as any).size || 0;
+    return sum + size;
+  }, 0);
+  
+  const usedMB = totalBytes / (1024 * 1024); // Converter para MB
+
+  return { usedMB, usedBytes: totalBytes, fileCount: data.length };
+};
+
+/**
+ * Função combinada que retorna contagem e uso de armazenamento em uma única requisição
+ */
+export const getUserImagesInfo = async (cpf: string): Promise<{ count: number; storage: { usedMB: number; usedBytes: number; fileCount: number } }> => {
+  const data = await fetchUserImagesList(cpf, false); // Não usar cache para garantir dados frescos
+
+  const fileCount = data.length;
+  
+  // Calcular tamanho total
+  const totalBytes = data.reduce((sum, file) => {
+    const size = (file.metadata?.size) || (file as any).size || 0;
+    return sum + size;
+  }, 0);
+  
+  const usedMB = totalBytes / (1024 * 1024);
+
+  return {
+    count: fileCount,
+    storage: {
+      usedMB,
+      usedBytes: totalBytes,
+      fileCount
+    }
+  };
 };
 
 /**
@@ -279,19 +354,21 @@ export const canUploadImages = async (
   reason?: 'count' | 'storage';
 }> => {
   try {
-    // Verificar quantidade de imagens primeiro (mais rápido)
-    const currentCount = await countUserImages(cpf);
+    // Usar função combinada para fazer apenas uma requisição
+    const userInfo = await getUserImagesInfo(cpf);
+    const currentCount = userInfo.count;
+    const currentMB = userInfo.storage.usedMB;
     const maxCount = MAX_IMAGES_PER_USER;
+    const maxMB = MAX_STORAGE_PER_USER_MB;
     
     // Verificar limite de quantidade antes de comprimir
     if (currentCount + newFiles.length > maxCount) {
-      const storageUsage = await getUserStorageUsage(cpf);
       return {
         canUpload: false,
         currentCount,
         maxCount,
-        currentMB: storageUsage.usedMB,
-        maxMB: MAX_STORAGE_PER_USER_MB,
+        currentMB,
+        maxMB,
         reason: 'count',
         message: `Limite de ${maxCount} imagens atingido. Você tem ${currentCount} imagens. Por favor, exclua algumas antes de fazer novo upload.`
       };
@@ -341,12 +418,8 @@ export const canUploadImages = async (
     const totalSizeBytes = filesToCheck.reduce((sum, file) => sum + file.size, 0);
     const totalSizeMB = totalSizeBytes / (1024 * 1024);
     
-    // Verificar espaço usado atual
-    const storageUsage = await getUserStorageUsage(cpf);
-    const currentMB = storageUsage.usedMB;
-    const maxMB = MAX_STORAGE_PER_USER_MB;
-    
     // Verificar limite de espaço com tamanho real após compressão
+    // (currentMB e maxMB já foram obtidos acima)
     if (currentMB + totalSizeMB > maxMB) {
       const availableMB = maxMB - currentMB;
       return {
@@ -472,9 +545,68 @@ export const deleteImage = async (cpf: string, fileName: string): Promise<boolea
       localStorage.setItem('imageHubLinks', JSON.stringify(links));
     }
 
+    // Invalidar cache após deleção
+    invalidateUserImagesCache(cpf);
+
     return true;
   } catch (error) {
     return false;
+  }
+};
+
+/**
+ * Remove múltiplas imagens do storage em uma única requisição
+ * @param cpf - CPF do usuário
+ * @param fileNames - Array de nomes de arquivos para deletar
+ * @returns Número de imagens deletadas com sucesso
+ */
+export const deleteMultipleImages = async (cpf: string, fileNames: string[]): Promise<number> => {
+  try {
+    if (fileNames.length === 0) {
+      return 0;
+    }
+
+    // Preparar todos os caminhos dos arquivos
+    const filePaths = fileNames.map(fileName => `${cpf}/${fileName}`);
+
+    // Fazer uma única requisição para deletar todos os arquivos
+    const { data, error } = await supabase.storage
+      .from('images')
+      .remove(filePaths);
+
+    if (error) {
+      console.error('Erro ao deletar múltiplas imagens:', error);
+      return 0;
+    }
+
+    // Remover os links únicos do localStorage
+    const links = getImageLinks();
+    let removedCount = 0;
+    
+    for (const fileName of fileNames) {
+      const linkToRemove = Object.keys(links).find(id => 
+        links[id].cpf === cpf && links[id].filename === fileName
+      );
+      
+      if (linkToRemove) {
+        delete links[linkToRemove];
+        removedCount++;
+      }
+    }
+    
+    if (removedCount > 0) {
+      localStorage.setItem('imageHubLinks', JSON.stringify(links));
+    }
+
+    // Invalidar cache após deleção
+    invalidateUserImagesCache(cpf);
+
+    // Retornar o número de arquivos deletados
+    // O Supabase retorna um array com os nomes dos arquivos deletados
+    return data?.length || fileNames.length;
+  } catch (error) {
+    console.error('Erro ao deletar múltiplas imagens:', error);
+    return 0;
   }
 };
 

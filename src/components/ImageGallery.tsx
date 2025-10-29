@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { listUserImages, deleteImage, countUserImages } from '../services/imageService';
+import { listUserImages, deleteImage, deleteMultipleImages, countUserImages } from '../services/imageService';
 
 interface ImageInfo {
   url: string;
@@ -165,12 +165,11 @@ const ImageGallery: React.FC<ImageGalleryProps> = ({ onDeleteSuccess }) => {
 
     setIsBulkDeleting(true);
     try {
-      const entries = Object.entries(selectedMap); // [uniqueId, filename]
-      let successCount = 0;
-      for (const [, filename] of entries) {
-        const ok = await deleteImage(cpf, filename);
-        if (ok) successCount++;
-      }
+      // Extrair todos os nomes de arquivo do mapa de seleção
+      const fileNames = Object.values(selectedMap); // [filename, filename, ...]
+      
+      // Deletar todas as imagens em uma única requisição
+      const successCount = await deleteMultipleImages(cpf, fileNames);
 
       if (successCount > 0) {
         // Limpar seleção primeiro
@@ -198,7 +197,17 @@ const ImageGallery: React.FC<ImageGalleryProps> = ({ onDeleteSuccess }) => {
         if (onDeleteSuccess) {
           onDeleteSuccess();
         }
+        
+        // Mostrar mensagem de sucesso
+        if (successCount < fileNames.length) {
+          alert(`${successCount} de ${fileNames.length} imagem(ns) excluída(s) com sucesso.`);
+        }
+      } else {
+        alert('Erro ao excluir imagens. Por favor, tente novamente.');
       }
+    } catch (error) {
+      console.error('Erro ao excluir imagens:', error);
+      alert('Erro ao excluir imagens. Por favor, tente novamente.');
     } finally {
       setIsBulkDeleting(false);
     }
@@ -214,16 +223,6 @@ const ImageGallery: React.FC<ImageGalleryProps> = ({ onDeleteSuccess }) => {
   useEffect(() => {
     setCurrentPage(1);
   }, [itemsPerPage]);
-  
-  // Recarregar total quando mudar itemsPerPage ou quando for primeira página sem total
-  useEffect(() => {
-    if (cpf && (currentPage === 1 || totalImages === null)) {
-      countUserImages(cpf).then(total => {
-        setTotalImages(total);
-      });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cpf, itemsPerPage]);
 
   const handleItemsPerPageChange = (value: number) => {
     setItemsPerPage(value);

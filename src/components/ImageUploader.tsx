@@ -1,6 +1,6 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { uploadImage, canUploadImages, getUserStorageUsage, countUserImages } from '../services/imageService';
+import { uploadImage, canUploadImages, getUserImagesInfo } from '../services/imageService';
 
 interface ImageUploaderProps {
   onUploadSuccess?: () => void;
@@ -17,43 +17,32 @@ const ImageUploader: React.FC<ImageUploaderProps> = ({ onUploadSuccess, deleteTr
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Função para recarregar informações de uso
-  const refreshUsageInfo = async () => {
+  const refreshUsageInfo = useCallback(async () => {
     if (!cpf) return;
     
     try {
-      const [imageCount, storage] = await Promise.all([
-        countUserImages(cpf),
-        getUserStorageUsage(cpf)
-      ]);
+      // Usar função combinada para fazer apenas uma requisição
+      const info = await getUserImagesInfo(cpf);
       setUsageInfo({
-        images: imageCount,
-        storageMB: storage.usedMB
+        images: info.count,
+        storageMB: info.storage.usedMB
       });
     } catch (error) {
       // Erro silencioso
     }
-  };
+  }, [cpf]);
 
   // Carregar informações de uso quando o componente monta ou quando CPF muda
   useEffect(() => {
     refreshUsageInfo();
-  }, [cpf]);
-
-  // Recarregar informações periodicamente quando necessário
-  useEffect(() => {
-    const interval = setInterval(() => {
-      refreshUsageInfo();
-    }, 30000); // Atualizar a cada 30 segundos
-    
-    return () => clearInterval(interval);
-  }, [cpf]);
+  }, [refreshUsageInfo]);
 
   // Recarregar informações quando há exclusão (detectado via deleteTrigger)
   useEffect(() => {
     if (deleteTrigger !== undefined && deleteTrigger > 0) {
       refreshUsageInfo();
     }
-  }, [deleteTrigger]);
+  }, [deleteTrigger, refreshUsageInfo]);
 
   const handleDragEnter = (e: React.DragEvent) => {
     e.preventDefault();
@@ -133,7 +122,7 @@ const ImageUploader: React.FC<ImageUploaderProps> = ({ onUploadSuccess, deleteTr
     }
 
     // Atualizar progresso após verificação bem-sucedida
-    setUploadProgress(`Iniciando upload de ${imageFiles.length} imagem(ns)...`);
+    setUploadProgress(`Enviando ${imageFiles.length} imagem(ns) em paralelo...`);
     setUploadPercentage(10);
 
     try {
@@ -141,31 +130,49 @@ const ImageUploader: React.FC<ImageUploaderProps> = ({ onUploadSuccess, deleteTr
       let failedCount = 0;
       let failedMessages: string[] = [];
       
-      // Fazer upload sequencial para rastrear progresso
-      for (let i = 0; i < imageFiles.length; i++) {
-        // Calcular porcentagem considerando que já foram 10% de verificação
-        const basePercentage = 10;
-        const uploadRange = 85; // 10% a 95%
-        const percentage = basePercentage + Math.round(((i + 1) / imageFiles.length) * uploadRange);
-        setUploadPercentage(percentage);
-        setUploadProgress(`Comprimindo e enviando imagem ${i + 1} de ${imageFiles.length}...`);
-        
+      // Criar todas as promessas de upload em paralelo
+      // (uploadImage já faz compressão internamente)
+      const uploadPromises = imageFiles.map(async (file, index) => {
         try {
-          const result = await uploadImage(imageFiles[i], cpf);
+          // Verificar limites desabilitado pois já foi verificado antes
+          const result = await uploadImage(file, cpf, false);
           if (result) {
-            results.push(result);
+            return { success: true, result, index, fileName: file.name };
           } else {
-            failedCount++;
-            failedMessages.push(`Falha ao enviar imagem ${i + 1}`);
+            return { success: false, error: 'Falha no upload', index, fileName: file.name };
           }
         } catch (error: any) {
+          return { success: false, error: error.message || 'Erro desconhecido', index, fileName: file.name };
+        }
+      });
+
+      // Aguardar todos os uploads com atualização de progresso em tempo real
+      let completedCount = 0;
+      const updateProgress = () => {
+        completedCount++;
+        // Atualizar progresso conforme cada upload completa (10% a 95%)
+        const progress = 10 + Math.round((completedCount / imageFiles.length) * 85);
+        setUploadPercentage(progress);
+        setUploadProgress(`Enviando... ${completedCount}/${imageFiles.length} completado(s)`);
+      };
+      
+      const uploadResults = await Promise.all(
+        uploadPromises.map(promise => 
+          promise.then(result => {
+            updateProgress();
+            return result;
+          })
+        )
+      );
+
+      // Processar resultados
+      for (const uploadResult of uploadResults) {
+        if (uploadResult.success && uploadResult.result) {
+          results.push(uploadResult.result);
+        } else {
           failedCount++;
-          if (error.message) {
-            failedMessages.push(`Imagem ${i + 1}: ${error.message}`);
-          } else {
-            failedMessages.push(`Erro ao enviar imagem ${i + 1}`);
-          }
-          console.error(`Erro no upload da imagem ${i + 1}:`, error);
+          const fileName = uploadResult.fileName || `Imagem ${uploadResult.index + 1}`;
+          failedMessages.push(`${fileName}: ${uploadResult.error || 'Erro desconhecido'}`);
         }
       }
       
