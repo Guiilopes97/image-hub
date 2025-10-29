@@ -1,18 +1,59 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { uploadImage } from '../services/imageService';
+import { uploadImage, canUploadImages, getUserStorageUsage, countUserImages } from '../services/imageService';
 
 interface ImageUploaderProps {
   onUploadSuccess?: () => void;
+  deleteTrigger?: number; // Quando muda, indica que houve exclusão
 }
 
-const ImageUploader: React.FC<ImageUploaderProps> = ({ onUploadSuccess }) => {
+const ImageUploader: React.FC<ImageUploaderProps> = ({ onUploadSuccess, deleteTrigger }) => {
   const { cpf } = useAuth();
   const [isDragging, setIsDragging] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<string>('');
   const [uploadPercentage, setUploadPercentage] = useState<number>(0);
+  const [usageInfo, setUsageInfo] = useState<{ images: number; storageMB: number } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Função para recarregar informações de uso
+  const refreshUsageInfo = async () => {
+    if (!cpf) return;
+    
+    try {
+      const [imageCount, storage] = await Promise.all([
+        countUserImages(cpf),
+        getUserStorageUsage(cpf)
+      ]);
+      setUsageInfo({
+        images: imageCount,
+        storageMB: storage.usedMB
+      });
+    } catch (error) {
+      // Erro silencioso
+    }
+  };
+
+  // Carregar informações de uso quando o componente monta ou quando CPF muda
+  useEffect(() => {
+    refreshUsageInfo();
+  }, [cpf]);
+
+  // Recarregar informações periodicamente quando necessário
+  useEffect(() => {
+    const interval = setInterval(() => {
+      refreshUsageInfo();
+    }, 30000); // Atualizar a cada 30 segundos
+    
+    return () => clearInterval(interval);
+  }, [cpf]);
+
+  // Recarregar informações quando há exclusão (detectado via deleteTrigger)
+  useEffect(() => {
+    if (deleteTrigger !== undefined && deleteTrigger > 0) {
+      refreshUsageInfo();
+    }
+  }, [deleteTrigger]);
 
   const handleDragEnter = (e: React.DragEvent) => {
     e.preventDefault();
@@ -66,28 +107,82 @@ const ImageUploader: React.FC<ImageUploaderProps> = ({ onUploadSuccess }) => {
       return;
     }
 
+    // Mostrar progresso desde o início (verificação de limites)
     setIsProcessing(true);
-    setUploadProgress(`Preparando upload de ${imageFiles.length} imagem(ns)...`);
-    setUploadPercentage(0);
+    setUploadProgress(`Comprimindo e verificando ${imageFiles.length} imagem(ns)...`);
+    setUploadPercentage(5);
+
+    // Verificar limites ANTES de começar o upload
+    let limitCheck;
+    try {
+      limitCheck = await canUploadImages(cpf, imageFiles);
+      if (!limitCheck.canUpload) {
+        setIsProcessing(false);
+        setUploadProgress('');
+        setUploadPercentage(0);
+        alert(limitCheck.message || 'Limite atingido. Por favor, exclua algumas imagens antes de fazer novo upload.');
+        return;
+      }
+    } catch (error: any) {
+      setIsProcessing(false);
+      setUploadProgress('');
+      setUploadPercentage(0);
+      console.error('Erro ao verificar limites:', error);
+      alert(error.message || 'Erro ao verificar limites. Por favor, tente novamente.');
+      return;
+    }
+
+    // Atualizar progresso após verificação bem-sucedida
+    setUploadProgress(`Iniciando upload de ${imageFiles.length} imagem(ns)...`);
+    setUploadPercentage(10);
 
     try {
       const results: Array<{ url: string; uniqueId: string; filename: string }> = [];
+      let failedCount = 0;
+      let failedMessages: string[] = [];
       
       // Fazer upload sequencial para rastrear progresso
       for (let i = 0; i < imageFiles.length; i++) {
-        const percentage = Math.round(((i + 1) / imageFiles.length) * 100);
+        // Calcular porcentagem considerando que já foram 10% de verificação
+        const basePercentage = 10;
+        const uploadRange = 85; // 10% a 95%
+        const percentage = basePercentage + Math.round(((i + 1) / imageFiles.length) * uploadRange);
         setUploadPercentage(percentage);
-        setUploadProgress(`Enviando imagem ${i + 1} de ${imageFiles.length}...`);
+        setUploadProgress(`Comprimindo e enviando imagem ${i + 1} de ${imageFiles.length}...`);
         
-        const result = await uploadImage(imageFiles[i], cpf);
-        if (result) {
-          results.push(result);
+        try {
+          const result = await uploadImage(imageFiles[i], cpf);
+          if (result) {
+            results.push(result);
+          } else {
+            failedCount++;
+            failedMessages.push(`Falha ao enviar imagem ${i + 1}`);
+          }
+        } catch (error: any) {
+          failedCount++;
+          if (error.message) {
+            failedMessages.push(`Imagem ${i + 1}: ${error.message}`);
+          } else {
+            failedMessages.push(`Erro ao enviar imagem ${i + 1}`);
+          }
+          console.error(`Erro no upload da imagem ${i + 1}:`, error);
         }
       }
       
       if (results.length > 0) {
         setUploadPercentage(100);
-        setUploadProgress(`Sucesso! ${results.length} imagem(ns) enviada(s).`);
+        let successMessage = `Sucesso! ${results.length} imagem(ns) enviada(s).`;
+        if (failedCount > 0) {
+          successMessage += ` ${failedCount} imagem(ns) não foi(foram) enviada(s) devido a limites ou erros.`;
+          if (failedMessages.length > 0) {
+            successMessage += `\n\nDetalhes: ${failedMessages[0]}`;
+          }
+        }
+        setUploadProgress(successMessage);
+        
+        // Atualizar informações de uso
+        await refreshUsageInfo();
+        
         // Limpar o input
         if (fileInputRef.current) {
           fileInputRef.current.value = '';
@@ -106,13 +201,17 @@ const ImageUploader: React.FC<ImageUploaderProps> = ({ onUploadSuccess }) => {
         setIsProcessing(false);
         setUploadProgress('');
         setUploadPercentage(0);
-        alert('Erro ao fazer upload das imagens. Verifique sua conexão com o Supabase.');
+        if (failedMessages.length > 0) {
+          alert(`Erro ao fazer upload:\n${failedMessages.join('\n')}`);
+        } else {
+          alert('Erro ao fazer upload das imagens. Verifique sua conexão com o Supabase.');
+        }
       }
-    } catch (error) {
+    } catch (error: any) {
       setIsProcessing(false);
       setUploadProgress('');
       setUploadPercentage(0);
-      alert('Erro ao fazer upload. Por favor, tente novamente.');
+      alert(error.message || 'Erro ao fazer upload. Por favor, tente novamente.');
     }
   };
 
@@ -121,8 +220,16 @@ const ImageUploader: React.FC<ImageUploaderProps> = ({ onUploadSuccess }) => {
   };
 
   return (
-    <div className="bg-white rounded-lg shadow-lg p-6">
-      <h2 className="text-2xl font-semibold text-gray-800 mb-4">Upload de Imagens</h2>
+    <div className="bg-gray-800 dark:bg-gray-900 rounded-lg shadow-lg p-4 sm:p-6 border border-gray-700 dark:border-gray-700">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-3">
+        <h2 className="text-xl sm:text-2xl font-semibold text-white">Upload de Imagens</h2>
+        {usageInfo && (
+          <div className="text-xs sm:text-sm text-gray-400 space-y-1">
+            <div>Imagens: <span className="font-medium text-gray-300">{usageInfo.images}/100</span></div>
+            <div>Espaço: <span className="font-medium text-gray-300">{usageInfo.storageMB.toFixed(2)}MB/20MB</span></div>
+          </div>
+        )}
+      </div>
       
       <div
         onClick={handleClick}
@@ -131,11 +238,11 @@ const ImageUploader: React.FC<ImageUploaderProps> = ({ onUploadSuccess }) => {
         onDragOver={handleDragOver}
         onDrop={handleDrop}
         className={`
-          border-2 border-dashed rounded-lg p-12 text-center cursor-pointer
+          border-2 border-dashed rounded-lg p-8 sm:p-12 text-center cursor-pointer
           transition-all duration-200
           ${isDragging 
-            ? 'border-blue-500 bg-blue-50 scale-105' 
-            : 'border-gray-300 hover:border-blue-400 hover:bg-gray-50'
+            ? 'border-blue-500 bg-blue-900/30 dark:bg-blue-950/30 scale-105' 
+            : 'border-gray-600 dark:border-gray-700 hover:border-blue-500 hover:bg-gray-700/50 dark:hover:bg-gray-800/50'
           }
           ${isProcessing ? 'opacity-50 pointer-events-none' : ''}
         `}
@@ -150,9 +257,9 @@ const ImageUploader: React.FC<ImageUploaderProps> = ({ onUploadSuccess }) => {
         />
         
         <div className="space-y-4">
-          <div className="mx-auto w-16 h-16 bg-gray-200 rounded-full flex items-center justify-center">
+          <div className="mx-auto w-16 h-16 bg-gray-700 dark:bg-gray-800 rounded-full flex items-center justify-center">
             <svg
-              className="w-8 h-8 text-gray-600"
+              className="w-8 h-8 text-gray-400"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
@@ -170,10 +277,10 @@ const ImageUploader: React.FC<ImageUploaderProps> = ({ onUploadSuccess }) => {
             <div className="w-full">
               <div className="mb-4">
                 <div className="flex justify-between items-center mb-2">
-                  <span className="text-sm font-medium text-gray-700">{uploadProgress}</span>
-                  <span className="text-sm font-semibold text-blue-600">{uploadPercentage}%</span>
+                  <span className="text-sm font-medium text-gray-300">{uploadProgress}</span>
+                  <span className="text-sm font-semibold text-blue-400">{uploadPercentage}%</span>
                 </div>
-                <div className="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
+                <div className="w-full bg-gray-700 dark:bg-gray-800 rounded-full h-3 overflow-hidden">
                   <div 
                     className="bg-blue-600 h-full rounded-full transition-all duration-300 ease-out"
                     style={{ width: `${uploadPercentage}%` }}
@@ -181,17 +288,17 @@ const ImageUploader: React.FC<ImageUploaderProps> = ({ onUploadSuccess }) => {
                 </div>
               </div>
               <div className="flex justify-center">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
               </div>
             </div>
           ) : (
             <>
               <div>
-                <p className="text-gray-700 font-semibold text-lg mb-1">
+                <p className="text-gray-200 font-semibold text-base sm:text-lg mb-1">
                   Arraste e solte suas imagens aqui
                 </p>
-                <p className="text-gray-500 text-sm mb-1">ou clique para selecionar</p>
-                <p className="text-gray-400 text-xs mt-2">Máximo de 10 imagens por upload</p>
+                <p className="text-gray-400 text-sm mb-1">ou clique para selecionar</p>
+                <p className="text-gray-500 text-xs mt-2">Máximo de 10 imagens por upload</p>
               </div>
               
               <div className="flex justify-center">

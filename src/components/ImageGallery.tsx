@@ -10,7 +10,11 @@ interface ImageInfo {
   projectUrl: string;
 }
 
-const ImageGallery: React.FC = () => {
+interface ImageGalleryProps {
+  onDeleteSuccess?: () => void;
+}
+
+const ImageGallery: React.FC<ImageGalleryProps> = ({ onDeleteSuccess }) => {
   const { cpf } = useAuth();
   const [images, setImages] = useState<ImageInfo[]>([]);
   const [loading, setLoading] = useState(false);
@@ -105,6 +109,11 @@ const ImageGallery: React.FC = () => {
             setCurrentPage(currentPage - 1);
           }
         }
+        
+        // Notificar exclusão bem-sucedida
+        if (onDeleteSuccess) {
+          onDeleteSuccess();
+        }
       } else {
         alert('Erro ao excluir imagem');
       }
@@ -184,6 +193,11 @@ const ImageGallery: React.FC = () => {
           // Se não temos total, apenas recarregar
           await loadImages();
         }
+        
+        // Notificar exclusão bem-sucedida
+        if (onDeleteSuccess) {
+          onDeleteSuccess();
+        }
       }
     } finally {
       setIsBulkDeleting(false);
@@ -239,10 +253,10 @@ const ImageGallery: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="bg-white rounded-lg shadow-lg p-6">
-        <h2 className="text-2xl font-semibold text-gray-800 mb-4">Galeria de Imagens</h2>
+      <div className="bg-gray-800 dark:bg-gray-900 rounded-lg shadow-lg p-6 border border-gray-700 dark:border-gray-700">
+        <h2 className="text-2xl font-semibold text-white mb-4">Galeria de Imagens</h2>
         <div className="min-h-[300px] flex items-center justify-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
         </div>
       </div>
     );
@@ -250,17 +264,17 @@ const ImageGallery: React.FC = () => {
 
   if (images.length === 0) {
     return (
-      <div className="bg-white rounded-lg shadow-lg p-6">
-        <h2 className="text-2xl font-semibold text-gray-800 mb-4">Galeria de Imagens</h2>
+      <div className="bg-gray-800 dark:bg-gray-900 rounded-lg shadow-lg p-6 border border-gray-700 dark:border-gray-700">
+        <h2 className="text-2xl font-semibold text-white mb-4">Galeria de Imagens</h2>
         <div className="min-h-[300px] flex items-center justify-center">
           <div className="text-center">
-            <div className="mx-auto w-20 h-20 bg-gray-200 rounded-full flex items-center justify-center mb-4">
+            <div className="mx-auto w-20 h-20 bg-gray-700 dark:bg-gray-800 rounded-full flex items-center justify-center mb-4">
               <svg className="w-10 h-10 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
               </svg>
             </div>
-            <p className="text-gray-600 text-lg font-medium">Nenhuma imagem enviada</p>
-            <p className="text-gray-500 text-sm mt-2">Faça upload de suas imagens para começar</p>
+            <p className="text-gray-300 text-lg font-medium">Nenhuma imagem enviada</p>
+            <p className="text-gray-400 text-sm mt-2">Faça upload de suas imagens para começar</p>
           </div>
         </div>
       </div>
@@ -268,20 +282,20 @@ const ImageGallery: React.FC = () => {
   }
 
   return (
-    <div className="bg-white rounded-lg shadow-lg p-4 sm:p-6">
+    <div className="bg-gray-800 dark:bg-gray-900 rounded-lg shadow-lg p-4 sm:p-6 border border-gray-700 dark:border-gray-700">
       <div className="flex flex-col gap-4 mb-4">
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 sm:gap-4">
-          <h2 className="text-xl sm:text-2xl font-semibold text-gray-800">Galeria de Imagens</h2>
+          <h2 className="text-xl sm:text-2xl font-semibold text-white">Galeria de Imagens</h2>
           <div className="flex flex-wrap items-center gap-2 sm:gap-4 w-full sm:w-auto">
             <div className="flex items-center gap-2">
-              <label htmlFor="itemsPerPage" className="text-xs sm:text-sm text-gray-700 font-medium">
+              <label htmlFor="itemsPerPage" className="text-xs sm:text-sm text-gray-300 font-medium">
                 Itens por página:
               </label>
               <select
                 id="itemsPerPage"
                 value={itemsPerPage}
                 onChange={(e) => handleItemsPerPageChange(Number(e.target.value))}
-                className="px-2 sm:px-3 py-1 border border-gray-300 rounded-lg text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="px-2 sm:px-3 py-1 bg-gray-700 dark:bg-gray-800 text-white border border-gray-600 dark:border-gray-700 rounded-lg text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 [&>option]:bg-gray-800 [&>option]:text-white"
               >
                 <option value={10}>10</option>
                 <option value={20}>20</option>
@@ -290,7 +304,7 @@ const ImageGallery: React.FC = () => {
                 <option value={50}>50</option>
               </select>
             </div>
-            <button onClick={selectAllCurrentPage} className="px-2 sm:px-3 py-2 bg-purple-100 hover:bg-purple-200 text-purple-700 rounded-lg transition-colors text-xs sm:text-sm whitespace-nowrap">
+            <button onClick={selectAllCurrentPage} className="px-2 sm:px-3 py-2 bg-purple-900/50 hover:bg-purple-800/50 text-purple-300 rounded-lg transition-colors text-xs sm:text-sm whitespace-nowrap border border-purple-700">
               Selecionar página
             </button>
             <button onClick={loadImages} className="px-3 sm:px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors text-xs sm:text-sm whitespace-nowrap">
@@ -301,15 +315,15 @@ const ImageGallery: React.FC = () => {
         
         {/* Barra de seleção em massa - responsiva */}
         {selectedCount > 0 && (
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 sm:p-4">
+          <div className="bg-blue-900/30 dark:bg-blue-950/30 border border-blue-700 dark:border-blue-800 rounded-lg p-3 sm:p-4">
             <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 sm:gap-4">
-              <span className="text-sm sm:text-base font-medium text-blue-900">
+              <span className="text-sm sm:text-base font-medium text-blue-300">
                 {selectedCount} imagem(ns) selecionada(s)
               </span>
               <div className="flex flex-wrap gap-2 w-full sm:w-auto">
                 <button
                   onClick={clearSelection}
-                  className="flex-1 sm:flex-none px-3 sm:px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded-lg transition-colors text-xs sm:text-sm font-medium whitespace-nowrap"
+                  className="flex-1 sm:flex-none px-3 sm:px-4 py-2 bg-gray-700 dark:bg-gray-800 hover:bg-gray-600 dark:hover:bg-gray-700 text-gray-200 rounded-lg transition-colors text-xs sm:text-sm font-medium whitespace-nowrap border border-gray-600"
                 >
                   Limpar seleção
                 </button>
@@ -328,7 +342,7 @@ const ImageGallery: React.FC = () => {
       
       {/* Informação de paginação */}
       {images.length > 0 && (
-        <div className="mb-4 text-sm text-gray-600">
+        <div className="mb-4 text-sm text-gray-400">
           {totalImages !== null ? (
             <>Mostrando {startItem} - {endItem} de {totalImages} imagens</>
           ) : (
@@ -350,8 +364,8 @@ const ImageGallery: React.FC = () => {
               />
             </div>
             {failedImages.has(imageData.uniqueId) ? (
-              <div className="w-full h-48 bg-gray-200 rounded-lg shadow-md flex items-center justify-center">
-                <div className="text-center text-gray-500">
+              <div className="w-full h-48 bg-gray-700 dark:bg-gray-800 rounded-lg shadow-md flex items-center justify-center">
+                <div className="text-center text-gray-400">
                   <svg className="w-12 h-12 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
                   </svg>
@@ -441,8 +455,8 @@ const ImageGallery: React.FC = () => {
 
       {/* Controles de paginação */}
       {totalPages !== null && totalPages > 1 && (
-        <div className="flex flex-col sm:flex-row items-center justify-between gap-4 mt-6 pt-6 border-t border-gray-200">
-          <div className="text-sm text-gray-600">
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-4 mt-6 pt-6 border-t border-gray-700 dark:border-gray-700">
+          <div className="text-sm text-gray-400">
             Página {currentPage} de {totalPages}
           </div>
           
@@ -450,7 +464,7 @@ const ImageGallery: React.FC = () => {
             <button
               onClick={handlePrev}
               disabled={currentPage === 1}
-              className="px-4 py-2 bg-gray-200 hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed text-gray-700 rounded-lg transition-colors text-sm font-medium"
+              className="px-4 py-2 bg-gray-700 dark:bg-gray-800 hover:bg-gray-600 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed text-gray-200 rounded-lg transition-colors text-sm font-medium border border-gray-600"
             >
               Anterior
             </button>
@@ -462,7 +476,7 @@ const ImageGallery: React.FC = () => {
                 <>
                   <button
                     onClick={() => handlePageChange(1)}
-                    className="px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg transition-colors text-sm"
+                    className="px-3 py-2 bg-gray-700 dark:bg-gray-800 hover:bg-gray-600 dark:hover:bg-gray-700 text-gray-200 rounded-lg transition-colors text-sm border border-gray-600"
                   >
                     1
                   </button>
@@ -487,10 +501,10 @@ const ImageGallery: React.FC = () => {
                   <button
                     key={pageNum}
                     onClick={() => handlePageChange(pageNum)}
-                    className={`px-3 py-2 rounded-lg transition-colors text-sm font-medium ${
+                    className={`px-3 py-2 rounded-lg transition-colors text-sm font-medium border ${
                       currentPage === pageNum
-                        ? 'bg-blue-600 text-white'
-                        : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+                        ? 'bg-blue-600 text-white border-blue-600'
+                        : 'bg-gray-700 dark:bg-gray-800 hover:bg-gray-600 dark:hover:bg-gray-700 text-gray-200 border-gray-600'
                     }`}
                   >
                     {pageNum}
@@ -504,7 +518,7 @@ const ImageGallery: React.FC = () => {
                   {currentPage < totalPages - 3 && <span className="px-2 text-gray-500">...</span>}
                   <button
                     onClick={() => handlePageChange(totalPages)}
-                    className="px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg transition-colors text-sm"
+                    className="px-3 py-2 bg-gray-700 dark:bg-gray-800 hover:bg-gray-600 dark:hover:bg-gray-700 text-gray-200 rounded-lg transition-colors text-sm border border-gray-600"
                   >
                     {totalPages}
                   </button>
@@ -515,7 +529,7 @@ const ImageGallery: React.FC = () => {
             <button
               onClick={handleNext}
               disabled={!hasMore || (totalPages !== null && currentPage >= totalPages)}
-              className="px-4 py-2 bg-gray-200 hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed text-gray-700 rounded-lg transition-colors text-sm font-medium"
+              className="px-4 py-2 bg-gray-700 dark:bg-gray-800 hover:bg-gray-600 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed text-gray-200 rounded-lg transition-colors text-sm font-medium border border-gray-600"
             >
               Próxima
             </button>
@@ -525,22 +539,22 @@ const ImageGallery: React.FC = () => {
       
       {/* Controles simplificados se não houver total ainda ou só uma página */}
       {totalPages === null && (currentPage > 1 || hasMore) && (
-        <div className="flex items-center justify-between gap-4 mt-6 pt-6 border-t border-gray-200">
-          <div className="text-sm text-gray-600">
+        <div className="flex items-center justify-between gap-4 mt-6 pt-6 border-t border-gray-700 dark:border-gray-700">
+          <div className="text-sm text-gray-400">
             Página {currentPage}
           </div>
           <div className="flex items-center gap-2">
             <button
               onClick={handlePrev}
               disabled={currentPage === 1}
-              className="px-4 py-2 bg-gray-200 hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed text-gray-700 rounded-lg transition-colors text-sm font-medium"
+              className="px-4 py-2 bg-gray-700 dark:bg-gray-800 hover:bg-gray-600 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed text-gray-200 rounded-lg transition-colors text-sm font-medium border border-gray-600"
             >
               Anterior
             </button>
             <button
               onClick={handleNext}
               disabled={!hasMore}
-              className="px-4 py-2 bg-gray-200 hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed text-gray-700 rounded-lg transition-colors text-sm font-medium"
+              className="px-4 py-2 bg-gray-700 dark:bg-gray-800 hover:bg-gray-600 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed text-gray-200 rounded-lg transition-colors text-sm font-medium border border-gray-600"
             >
               Próxima
             </button>
