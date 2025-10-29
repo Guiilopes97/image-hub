@@ -16,16 +16,16 @@ const Dashboard: React.FC = () => {
     <div className="min-h-screen bg-gradient-to-br from-blue-500 to-purple-600">
       {/* Header */}
       <div className="bg-white shadow-md">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center py-4">
-            <div className="flex items-center space-x-4">
-              <h1 className="text-2xl font-bold text-gray-800">Image Hub</h1>
-              <span className="text-gray-600">|</span>
-              <span className="text-gray-700">CPF: {formattedCPF}</span>
+        <div className="max-w-7xl mx-auto px-3 sm:px-4 md:px-6 lg:px-8">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 sm:gap-4 py-3 sm:py-4">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-4">
+              <h1 className="text-xl sm:text-2xl font-bold text-gray-800">Image Hub</h1>
+              <span className="hidden sm:inline text-gray-600">|</span>
+              <span className="text-sm sm:text-base text-gray-700">CPF: {formattedCPF}</span>
             </div>
             <button
               onClick={logout}
-              className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors font-medium"
+              className="w-full sm:w-auto px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors font-medium text-sm sm:text-base"
             >
               Sair
             </button>
@@ -34,8 +34,8 @@ const Dashboard: React.FC = () => {
       </div>
 
       {/* Main Content */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="space-y-8">
+      <div className="max-w-7xl mx-auto px-3 sm:px-4 md:px-6 lg:px-8 py-4 sm:py-6 md:py-8">
+        <div className="space-y-4 sm:space-y-6 md:space-y-8">
           <ImageUploader onUploadSuccess={handleUploadSuccess} />
           <ImageGallery key={reloadKey} />
         </div>

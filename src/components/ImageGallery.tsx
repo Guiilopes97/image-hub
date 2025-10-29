@@ -21,6 +21,8 @@ const ImageGallery: React.FC = () => {
   const [itemsPerPage, setItemsPerPage] = useState(20);
   const [hasMore, setHasMore] = useState(false);
   const [totalImages, setTotalImages] = useState<number | null>(null);
+  const [selectedMap, setSelectedMap] = useState<Record<string, string>>({}); // uniqueId -> filename
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
 
   const loadImages = useCallback(async () => {
     if (!cpf) return;
@@ -56,6 +58,14 @@ const ImageGallery: React.FC = () => {
       
       setImages(imageData);
       setHasMore(imageData.length === itemsPerPage);
+      // Remover seleções que não estão mais presentes na página carregada
+      setSelectedMap((prev) => {
+        const next: Record<string, string> = {};
+        for (const img of imageData) {
+          if (prev[img.uniqueId]) next[img.uniqueId] = img.filename;
+        }
+        return next;
+      });
     } catch (error) {
       // Erro silencioso
       setHasMore(false);
@@ -117,6 +127,67 @@ const ImageGallery: React.FC = () => {
 
   const handleOpenInNewTab = (projectUrl: string) => {
     window.open(projectUrl, '_blank', 'noopener,noreferrer');
+  };
+
+  const toggleSelect = (uniqueId: string, filename: string) => {
+    setSelectedMap((prev) => {
+      const next = { ...prev };
+      if (next[uniqueId]) delete next[uniqueId];
+      else next[uniqueId] = filename;
+      return next;
+    });
+  };
+
+  const selectAllCurrentPage = () => {
+    const next: Record<string, string> = { ...selectedMap };
+    for (const img of images) {
+      next[img.uniqueId] = img.filename;
+    }
+    setSelectedMap(next);
+  };
+
+  const clearSelection = () => setSelectedMap({});
+
+  const selectedCount = Object.keys(selectedMap).length;
+
+  const handleBulkDelete = async () => {
+    if (!cpf || selectedCount === 0) return;
+    if (!window.confirm(`Excluir ${selectedCount} imagem(ns)?`)) return;
+
+    setIsBulkDeleting(true);
+    try {
+      const entries = Object.entries(selectedMap); // [uniqueId, filename]
+      let successCount = 0;
+      for (const [, filename] of entries) {
+        const ok = await deleteImage(cpf, filename);
+        if (ok) successCount++;
+      }
+
+      if (successCount > 0) {
+        // Limpar seleção primeiro
+        setSelectedMap({});
+        
+        // Atualizar total
+        if (totalImages !== null) {
+          const newTotal = Math.max(0, totalImages - successCount);
+          setTotalImages(newTotal);
+          
+          // Verificar se precisa ajustar a página
+          const newTotalPages = Math.ceil(newTotal / itemsPerPage);
+          if (currentPage > newTotalPages && newTotalPages > 0) {
+            setCurrentPage(newTotalPages);
+          } else {
+            // Recarregar imagens da página atual
+            await loadImages();
+          }
+        } else {
+          // Se não temos total, apenas recarregar
+          await loadImages();
+        }
+      }
+    } finally {
+      setIsBulkDeleting(false);
+    }
   };
 
   // Calcular informações de paginação
@@ -197,31 +268,62 @@ const ImageGallery: React.FC = () => {
   }
 
   return (
-    <div className="bg-white rounded-lg shadow-lg p-6">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-4">
-        <h2 className="text-2xl font-semibold text-gray-800">Galeria de Imagens</h2>
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2">
-            <label htmlFor="itemsPerPage" className="text-sm text-gray-700 font-medium">
-              Itens por página:
-            </label>
-            <select
-              id="itemsPerPage"
-              value={itemsPerPage}
-              onChange={(e) => handleItemsPerPageChange(Number(e.target.value))}
-              className="px-3 py-1 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <option value={10}>10</option>
-              <option value={20}>20</option>
-              <option value={30}>30</option>
-              <option value={40}>40</option>
-              <option value={50}>50</option>
-            </select>
+    <div className="bg-white rounded-lg shadow-lg p-4 sm:p-6">
+      <div className="flex flex-col gap-4 mb-4">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 sm:gap-4">
+          <h2 className="text-xl sm:text-2xl font-semibold text-gray-800">Galeria de Imagens</h2>
+          <div className="flex flex-wrap items-center gap-2 sm:gap-4 w-full sm:w-auto">
+            <div className="flex items-center gap-2">
+              <label htmlFor="itemsPerPage" className="text-xs sm:text-sm text-gray-700 font-medium">
+                Itens por página:
+              </label>
+              <select
+                id="itemsPerPage"
+                value={itemsPerPage}
+                onChange={(e) => handleItemsPerPageChange(Number(e.target.value))}
+                className="px-2 sm:px-3 py-1 border border-gray-300 rounded-lg text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value={10}>10</option>
+                <option value={20}>20</option>
+                <option value={30}>30</option>
+                <option value={40}>40</option>
+                <option value={50}>50</option>
+              </select>
+            </div>
+            <button onClick={selectAllCurrentPage} className="px-2 sm:px-3 py-2 bg-purple-100 hover:bg-purple-200 text-purple-700 rounded-lg transition-colors text-xs sm:text-sm whitespace-nowrap">
+              Selecionar página
+            </button>
+            <button onClick={loadImages} className="px-3 sm:px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors text-xs sm:text-sm whitespace-nowrap">
+              Atualizar
+            </button>
           </div>
-          <button onClick={loadImages} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors text-sm">
-            Atualizar
-          </button>
         </div>
+        
+        {/* Barra de seleção em massa - responsiva */}
+        {selectedCount > 0 && (
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 sm:p-4">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 sm:gap-4">
+              <span className="text-sm sm:text-base font-medium text-blue-900">
+                {selectedCount} imagem(ns) selecionada(s)
+              </span>
+              <div className="flex flex-wrap gap-2 w-full sm:w-auto">
+                <button
+                  onClick={clearSelection}
+                  className="flex-1 sm:flex-none px-3 sm:px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded-lg transition-colors text-xs sm:text-sm font-medium whitespace-nowrap"
+                >
+                  Limpar seleção
+                </button>
+                <button
+                  onClick={handleBulkDelete}
+                  disabled={isBulkDeleting}
+                  className="flex-1 sm:flex-none px-3 sm:px-4 py-2 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white rounded-lg transition-colors text-xs sm:text-sm font-medium whitespace-nowrap"
+                >
+                  {isBulkDeleting ? 'Excluindo...' : 'Excluir selecionadas'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
       
       {/* Informação de paginação */}
@@ -238,6 +340,15 @@ const ImageGallery: React.FC = () => {
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 mb-6">
         {images.map((imageData, index) => (
           <div key={imageData.uniqueId} className="relative group">
+            {/* Checkbox seleção (minimalista) */}
+            <div className="absolute top-2 left-2 z-10">
+              <input
+                type="checkbox"
+                checked={Boolean(selectedMap[imageData.uniqueId])}
+                onChange={() => toggleSelect(imageData.uniqueId, imageData.filename)}
+                className="h-4 w-4 accent-blue-600 cursor-pointer"
+              />
+            </div>
             {failedImages.has(imageData.uniqueId) ? (
               <div className="w-full h-48 bg-gray-200 rounded-lg shadow-md flex items-center justify-center">
                 <div className="text-center text-gray-500">
@@ -267,7 +378,7 @@ const ImageGallery: React.FC = () => {
               />
             )}
             
-            <div className="absolute top-2 right-2 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+            <div className="absolute top-2 right-2 flex gap-2 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
               <button
                 onClick={(e) => {
                   e.stopPropagation();
