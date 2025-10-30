@@ -8,7 +8,7 @@ interface ImageUploaderProps {
 }
 
 const ImageUploader: React.FC<ImageUploaderProps> = ({ onUploadSuccess, deleteTrigger }) => {
-  const { cpf } = useAuth();
+  const { userId } = useAuth();
   const [isDragging, setIsDragging] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<string>('');
@@ -18,11 +18,11 @@ const ImageUploader: React.FC<ImageUploaderProps> = ({ onUploadSuccess, deleteTr
 
   // Função para recarregar informações de uso
   const refreshUsageInfo = useCallback(async () => {
-    if (!cpf) return;
+    if (!userId) return;
     
     try {
       // Usar função combinada para fazer apenas uma requisição
-      const info = await getUserImagesInfo(cpf);
+      const info = await getUserImagesInfo(userId);
       setUsageInfo({
         images: info.count,
         storageMB: info.storage.usedMB
@@ -30,7 +30,7 @@ const ImageUploader: React.FC<ImageUploaderProps> = ({ onUploadSuccess, deleteTr
     } catch (error) {
       // Erro silencioso
     }
-  }, [cpf]);
+  }, [userId]);
 
   // Carregar informações de uso quando o componente monta ou quando CPF muda
   useEffect(() => {
@@ -91,8 +91,8 @@ const ImageUploader: React.FC<ImageUploaderProps> = ({ onUploadSuccess, deleteTr
       return;
     }
 
-    if (!cpf) {
-      alert('Erro: CPF não identificado');
+    if (!userId) {
+      alert('Erro: Usuário não identificado');
       return;
     }
 
@@ -104,7 +104,7 @@ const ImageUploader: React.FC<ImageUploaderProps> = ({ onUploadSuccess, deleteTr
     // Verificar limites ANTES de começar o upload
     let limitCheck;
     try {
-      limitCheck = await canUploadImages(cpf, imageFiles);
+      limitCheck = await canUploadImages(userId, imageFiles);
       if (!limitCheck.canUpload) {
         setIsProcessing(false);
         setUploadProgress('');
@@ -135,7 +135,7 @@ const ImageUploader: React.FC<ImageUploaderProps> = ({ onUploadSuccess, deleteTr
       const uploadPromises = imageFiles.map(async (file, index) => {
         try {
           // Verificar limites desabilitado pois já foi verificado antes
-          const result = await uploadImage(file, cpf, false);
+          const result = await uploadImage(file, userId, false);
           if (result) {
             return { success: true, result, index, fileName: file.name };
           } else {

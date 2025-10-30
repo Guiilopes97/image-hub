@@ -15,7 +15,8 @@ export interface ImageData {
 
 export interface ImageLink {
   uniqueId: string;
-  cpf: string;
+  cpf?: string;  // Opcional para compatibilidade com links antigos
+  userId?: string;  // Novo: ID do usuário (não expõe CPF)
   filename: string;
   createdAt: number;
 }
@@ -47,30 +48,82 @@ const getImageLinks = (): Record<string, ImageLink> => {
 
 /**
  * Busca um link pelo ID único
+ * Tenta buscar da tabela Supabase primeiro (sem expor CPF), depois fallback para decodificação
  */
-export const getImageLink = (uniqueId: string): ImageLink | null => {
+export const getImageLink = async (uniqueId: string): Promise<ImageLink | null> => {
   try {
-    // Decodificar do base64
-    const decodedStr = atob(uniqueId.replace(/-/g, '/').replace(/_/g, '+'));
-    const parts = decodedStr.split('-');
+    // Primeiro, tentar buscar da tabela Supabase (mais seguro, não expõe CPF na requisição)
+    const { data: dbData, error: dbError } = await supabase
+      .from('image_links')
+      .select('unique_id, file_path')
+      .eq('unique_id', uniqueId)
+      .single();
     
-    if (parts.length >= 2) {
-      const cpf = parts[0];
-      const filename = parts.slice(1).join('-');
-      
-      return {
-        uniqueId,
-        cpf,
-        filename,
-        createdAt: Date.now()
-      };
+    if (!dbError && dbData && dbData.file_path) {
+      // Extrair userId e filename do file_path (formato: userId/filename)
+      const parts = dbData.file_path.split('/');
+      if (parts.length === 2) {
+        return {
+          uniqueId,
+          userId: parts[0],  // userId ao invés de cpf
+          filename: parts[1],
+          createdAt: Date.now()
+        };
+      }
     }
-  } catch (error) {
-    // Se falhar, tentar no localStorage (backup)
+    
+    // Fallback: Decodificar do base64 (compatibilidade com links antigos)
+    try {
+      const decodedStr = atob(uniqueId.replace(/-/g, '/').replace(/_/g, '+'));
+      const parts = decodedStr.split('-');
+      
+      if (parts.length >= 2) {
+        // Pode ser userId ou cpf (compatibilidade)
+        const identifier = parts[0];
+        const filename = parts.slice(1).join('-');
+        
+        // Verificar se parece ser userId (16 chars hex) ou cpf (11 dígitos)
+        const isUserId = /^[a-f0-9]{16}$/i.test(identifier);
+        
+        return {
+          uniqueId,
+          userId: isUserId ? identifier : undefined,
+          cpf: !isUserId ? identifier : undefined,
+          filename,
+          createdAt: Date.now()
+        };
+      }
+    } catch (error) {
+      // Continuar para tentar localStorage
+    }
+    
+    // Último fallback: localStorage (backup local)
     const links = getImageLinks();
     const link = links[uniqueId];
     if (link) {
       return link;
+    }
+  } catch (error) {
+    // Se tudo falhar, tentar decodificar como último recurso
+    try {
+      const decodedStr = atob(uniqueId.replace(/-/g, '/').replace(/_/g, '+'));
+      const parts = decodedStr.split('-');
+      
+      if (parts.length >= 2) {
+        const identifier = parts[0];
+        const filename = parts.slice(1).join('-');
+        const isUserId = /^[a-f0-9]{16}$/i.test(identifier);
+        
+        return {
+          uniqueId,
+          userId: isUserId ? identifier : undefined,
+          cpf: !isUserId ? identifier : undefined,
+          filename,
+          createdAt: Date.now()
+        };
+      }
+    } catch (err) {
+      // Ignorar erro
     }
   }
   
@@ -131,8 +184,9 @@ const compressImage = async (file: File): Promise<File> => {
 
 /**
  * Faz upload de uma imagem para o Supabase Storage e retorna informações com link único
+ * @param userId - User ID (não é CPF) - gerado via hash do CPF
  */
-export const uploadImage = async (file: File, cpf: string, checkLimits: boolean = true): Promise<{ url: string; uniqueId: string; filename: string } | null> => {
+export const uploadImage = async (file: File, userId: string, checkLimits: boolean = true): Promise<{ url: string; uniqueId: string; filename: string } | null> => {
   try {
     // Comprimir imagem primeiro
     const compressedFile = await compressImage(file);
@@ -140,7 +194,7 @@ export const uploadImage = async (file: File, cpf: string, checkLimits: boolean 
     // Verificar limites após compressão apenas se necessário
     // (a verificação já foi feita no início com todos os arquivos)
     if (checkLimits) {
-      const storageUsage = await getUserStorageUsage(cpf);
+      const storageUsage = await getUserStorageUsage(userId);
       const realSizeMB = compressedFile.size / (1024 * 1024);
       
       // Verificação rápida apenas de espaço (quantidade já foi verificada antes)
@@ -157,11 +211,12 @@ export const uploadImage = async (file: File, cpf: string, checkLimits: boolean 
     else if (compressedFile.type === 'image/jpeg') finalExt = 'jpg';
     else if (compressedFile.type === 'image/png') finalExt = 'png';
     const fileName = `${Date.now()}-${Math.random().toString(36).substring(7)}.${finalExt}`;
-    const filePath = `${cpf}/${fileName}`;
+    // Usar userId ao invés de CPF no path (não expõe CPF)
+    const filePath = `${userId}/${fileName}`;
     
-    // Gerar ID único codificado (CPF e filename em base64)
-    // Isso permite que qualquer pessoa com o link possa acessar
-    const encodedData = btoa(`${cpf}-${fileName}`).replace(/\//g, '-').replace(/\+/g, '_').replace(/=/g, '');
+    // Gerar ID único codificado (userId e filename em base64)
+    // Isso permite que qualquer pessoa com o link possa acessar sem expor CPF
+    const encodedData = btoa(`${userId}-${fileName}`).replace(/\//g, '-').replace(/\+/g, '_').replace(/=/g, '');
     const uniqueId = encodedData;
 
     const { error: uploadError } = await supabase.storage
@@ -179,16 +234,32 @@ export const uploadImage = async (file: File, cpf: string, checkLimits: boolean 
       .from('images')
       .getPublicUrl(filePath);
 
+    // Salvar o mapeamento do link único na tabela Supabase (sem expor CPF)
+    try {
+      await supabase
+        .from('image_links')
+        .upsert({
+          unique_id: uniqueId,
+          file_path: filePath,  // userId/filename (não contém CPF)
+          created_at: new Date().toISOString()
+        }, {
+          onConflict: 'unique_id'
+        });
+    } catch (error) {
+      // Erro silencioso - continuar mesmo se não conseguir salvar na tabela
+      console.warn('Não foi possível salvar mapeamento na tabela:', error);
+    }
+
     // Salvar o mapeamento do link único no localStorage (backup)
     saveImageLink({
       uniqueId,
-      cpf,
+      userId,  // Usar userId ao invés de cpf
       filename: fileName,
       createdAt: Date.now()
     });
 
     // Invalidar cache após upload
-    invalidateUserImagesCache(cpf);
+    invalidateUserImagesCache(userId);
 
     return {
       url: data.publicUrl,
@@ -202,9 +273,10 @@ export const uploadImage = async (file: File, cpf: string, checkLimits: boolean 
 
 /**
  * Faz upload de múltiplas imagens
+ * @param userId - User ID (não é CPF)
  */
-export const uploadMultipleImages = async (files: File[], cpf: string): Promise<Array<{ url: string; uniqueId: string; filename: string }>> => {
-  const uploadPromises = files.map(file => uploadImage(file, cpf));
+export const uploadMultipleImages = async (files: File[], userId: string): Promise<Array<{ url: string; uniqueId: string; filename: string }>> => {
+  const uploadPromises = files.map(file => uploadImage(file, userId));
   const results = await Promise.all(uploadPromises);
   return results.filter((result): result is { url: string; uniqueId: string; filename: string } => result !== null);
 };
@@ -213,21 +285,25 @@ export const uploadMultipleImages = async (files: File[], cpf: string): Promise<
  * Função auxiliar que busca os dados das imagens uma única vez
  * Reutilizada por countUserImages e getUserStorageUsage para evitar requisições duplicadas
  */
-let userImagesCache: { cpf: string; data: any[]; timestamp: number } | null = null;
+let userImagesCache: { userId: string; data: any[]; timestamp: number } | null = null;
 const CACHE_TTL = 5000; // Cache por 5 segundos
 let pendingRequests: Map<string, Promise<any[]>> = new Map();
 
-const fetchUserImagesList = async (cpf: string, useCache: boolean = true): Promise<any[]> => {
+/**
+ * Busca lista de imagens do usuário pelo userId (não expõe CPF)
+ * @param userId - User ID (não é CPF)
+ */
+const fetchUserImagesList = async (userId: string, useCache: boolean = true): Promise<any[]> => {
   // Verificar cache primeiro
-  if (useCache && userImagesCache && userImagesCache.cpf === cpf) {
+  if (useCache && userImagesCache && userImagesCache.userId === userId) {
     const age = Date.now() - userImagesCache.timestamp;
     if (age < CACHE_TTL) {
       return userImagesCache.data;
     }
   }
 
-  // Verificar se já existe uma requisição em andamento para este CPF
-  const pendingRequest = pendingRequests.get(cpf);
+  // Verificar se já existe uma requisição em andamento para este userId
+  const pendingRequest = pendingRequests.get(userId);
   if (pendingRequest) {
     return pendingRequest;
   }
@@ -235,9 +311,10 @@ const fetchUserImagesList = async (cpf: string, useCache: boolean = true): Promi
   // Criar nova requisição e armazenar
   const request = (async () => {
     try {
+      // Listar arquivos usando userId ao invés de CPF
       const { data, error } = await supabase.storage
         .from('images')
-        .list(cpf, {
+        .list(userId, {
           limit: 1000, // Limite máximo prático do Supabase
           offset: 0
         });
@@ -247,35 +324,36 @@ const fetchUserImagesList = async (cpf: string, useCache: boolean = true): Promi
       }
 
       // Atualizar cache
-      userImagesCache = { cpf, data, timestamp: Date.now() };
+      userImagesCache = { userId, data, timestamp: Date.now() };
       return data;
     } catch (error) {
       return [];
     } finally {
       // Remover da lista de requisições pendentes
-      pendingRequests.delete(cpf);
+      pendingRequests.delete(userId);
     }
   })();
 
   // Armazenar a promessa para outras chamadas simultâneas
-  pendingRequests.set(cpf, request);
+  pendingRequests.set(userId, request);
   return request;
 };
 
 /**
  * Invalida o cache de imagens do usuário (útil após uploads/deleções)
+ * @param userId - User ID (não é CPF)
  */
-export const invalidateUserImagesCache = (cpf?: string): void => {
-  if (cpf) {
-    if (userImagesCache && userImagesCache.cpf === cpf) {
+export const invalidateUserImagesCache = (userId?: string): void => {
+  if (userId) {
+    if (userImagesCache && userImagesCache.userId === userId) {
       userImagesCache = null;
     }
     // Limpar requisição pendente se houver
-    pendingRequests.delete(cpf);
-    // Limpar cache de listUserImages para este CPF
+    pendingRequests.delete(userId);
+    // Limpar cache de listUserImages para este userId
     const keysToDelete: string[] = [];
     listUserImagesCache.forEach((_, key) => {
-      if (key.startsWith(`${cpf}-`)) {
+      if (key.startsWith(`${userId}-`)) {
         keysToDelete.push(key);
       }
     });
@@ -289,18 +367,20 @@ export const invalidateUserImagesCache = (cpf?: string): void => {
 };
 
 /**
- * Conta o total de imagens de um CPF
+ * Conta o total de imagens de um usuário
+ * @param userId - User ID (não é CPF)
  */
-export const countUserImages = async (cpf: string): Promise<number> => {
-  const data = await fetchUserImagesList(cpf);
+export const countUserImages = async (userId: string): Promise<number> => {
+  const data = await fetchUserImagesList(userId);
   return data.length;
 };
 
 /**
  * Calcula o espaço de armazenamento usado por um usuário em MB
+ * @param userId - User ID (não é CPF)
  */
-export const getUserStorageUsage = async (cpf: string): Promise<{ usedMB: number; usedBytes: number; fileCount: number }> => {
-  const data = await fetchUserImagesList(cpf);
+export const getUserStorageUsage = async (userId: string): Promise<{ usedMB: number; usedBytes: number; fileCount: number }> => {
+  const data = await fetchUserImagesList(userId);
 
   if (data.length === 0) {
     return { usedMB: 0, usedBytes: 0, fileCount: 0 };
@@ -320,9 +400,10 @@ export const getUserStorageUsage = async (cpf: string): Promise<{ usedMB: number
 
 /**
  * Função combinada que retorna contagem e uso de armazenamento em uma única requisição
+ * @param userId - User ID (não é CPF)
  */
-export const getUserImagesInfo = async (cpf: string): Promise<{ count: number; storage: { usedMB: number; usedBytes: number; fileCount: number } }> => {
-  const data = await fetchUserImagesList(cpf, false); // Não usar cache para garantir dados frescos
+export const getUserImagesInfo = async (userId: string): Promise<{ count: number; storage: { usedMB: number; usedBytes: number; fileCount: number } }> => {
+  const data = await fetchUserImagesList(userId, false); // Não usar cache para garantir dados frescos
 
   const fileCount = data.length;
   
@@ -351,7 +432,7 @@ export const getUserImagesInfo = async (cpf: string): Promise<{ count: number; s
  * @param alreadyCompressed - Se true, assume que os arquivos já estão comprimidos e usa tamanho direto
  */
 export const canUploadImages = async (
-  cpf: string, 
+  userId: string, 
   newFiles: File[],
   alreadyCompressed: boolean = false
 ): Promise<{ 
@@ -365,7 +446,7 @@ export const canUploadImages = async (
 }> => {
   try {
     // Usar função combinada para fazer apenas uma requisição
-    const userInfo = await getUserImagesInfo(cpf);
+    const userInfo = await getUserImagesInfo(userId);
     const currentCount = userInfo.count;
     const currentMB = userInfo.storage.usedMB;
     const maxCount = MAX_IMAGES_PER_USER;
@@ -470,15 +551,16 @@ let listUserImagesPending: Map<string, Promise<any[]>> = new Map();
 const LIST_CACHE_TTL = 2000; // 2 segundos para requisições de lista
 
 /**
- * Lista todas as imagens de um CPF com seus links únicos
+ * Lista todas as imagens de um usuário com seus links únicos
+ * @param userId - User ID (não é CPF)
  */
 export const listUserImages = async (
-  cpf: string,
+  userId: string,
   limit: number = 20,
   offset: number = 0
 ): Promise<Array<{ url: string; thumbUrl: string; uniqueId: string; filename: string }>> => {
   // Gerar chave única para cache baseada nos parâmetros
-  const cacheKey = `${cpf}-${limit}-${offset}`;
+  const cacheKey = `${userId}-${limit}-${offset}`;
   
   // Verificar cache primeiro
   const cached = listUserImagesCache.get(cacheKey);
@@ -487,7 +569,7 @@ export const listUserImages = async (
     if (age < LIST_CACHE_TTL) {
       // Retornar do cache, mas regenerar URLs (que são apenas processamento)
       return cached.data.map(file => {
-        const filePath = `${cpf}/${file.name}`;
+        const filePath = `${userId}/${file.name}`;
         const { data: publicUrlData } = supabase.storage
           .from('images')
           .getPublicUrl(filePath);
@@ -502,7 +584,8 @@ export const listUserImages = async (
             }
           });
         
-        const uniqueId = btoa(`${cpf}-${file.name}`).replace(/\//g, '-').replace(/\+/g, '_').replace(/=/g, '');
+        // Gerar uniqueId usando userId (não expõe CPF)
+        const uniqueId = btoa(`${userId}-${file.name}`).replace(/\//g, '-').replace(/\+/g, '_').replace(/=/g, '');
         
         return {
           url: publicUrlData.publicUrl,
@@ -523,9 +606,10 @@ export const listUserImages = async (
   // Criar nova requisição
   const request = (async () => {
     try {
+      // Listar usando userId ao invés de CPF
       const { data, error } = await supabase.storage
         .from('images')
-        .list(cpf, {
+        .list(userId, {
           limit,
           offset,
           sortBy: { column: 'created_at', order: 'desc' }
@@ -545,9 +629,9 @@ export const listUserImages = async (
         timestamp: Date.now()
       });
 
-      // Gerar URLs públicas e links únicos (usando base64 para ser determinístico)
+      // Gerar URLs públicas e links únicos (usando userId, não CPF)
       const images = data.map((file) => {
-        const filePath = `${cpf}/${file.name}`;
+        const filePath = `${userId}/${file.name}`;
         const { data: publicUrlData } = supabase.storage
           .from('images')
           .getPublicUrl(filePath);
@@ -563,13 +647,13 @@ export const listUserImages = async (
             }
           });
         
-        // Gerar uniqueId baseado em base64 (mesmo método do upload)
-        const uniqueId = btoa(`${cpf}-${file.name}`).replace(/\//g, '-').replace(/\+/g, '_').replace(/=/g, '');
+        // Gerar uniqueId usando userId (não expõe CPF)
+        const uniqueId = btoa(`${userId}-${file.name}`).replace(/\//g, '-').replace(/\+/g, '_').replace(/=/g, '');
         
         // Salvar no localStorage como backup
         saveImageLink({
           uniqueId,
-          cpf,
+          userId,  // Usar userId ao invés de cpf
           filename: file.name,
           createdAt: Date.now()
         });
@@ -598,10 +682,11 @@ export const listUserImages = async (
 
 /**
  * Remove uma imagem do storage e seu link único
+ * @param userId - User ID (não é CPF)
  */
-export const deleteImage = async (cpf: string, fileName: string): Promise<boolean> => {
+export const deleteImage = async (userId: string, fileName: string): Promise<boolean> => {
   try {
-    const filePath = `${cpf}/${fileName}`;
+    const filePath = `${userId}/${fileName}`;
     const { error } = await supabase.storage
       .from('images')
       .remove([filePath]);
@@ -610,10 +695,21 @@ export const deleteImage = async (cpf: string, fileName: string): Promise<boolea
       return false;
     }
 
+    // Remover da tabela Supabase se existir
+    const uniqueId = btoa(`${userId}-${fileName}`).replace(/\//g, '-').replace(/\+/g, '_').replace(/=/g, '');
+    try {
+      await supabase
+        .from('image_links')
+        .delete()
+        .eq('unique_id', uniqueId);
+    } catch (error) {
+      // Erro silencioso
+    }
+
     // Remover o link único do localStorage
     const links = getImageLinks();
     const linkToRemove = Object.keys(links).find(id => 
-      links[id].cpf === cpf && links[id].filename === fileName
+      (links[id].userId === userId || links[id].cpf === userId) && links[id].filename === fileName
     );
     
     if (linkToRemove) {
@@ -622,7 +718,7 @@ export const deleteImage = async (cpf: string, fileName: string): Promise<boolea
     }
 
     // Invalidar cache após deleção
-    invalidateUserImagesCache(cpf);
+    invalidateUserImagesCache(userId);
 
     return true;
   } catch (error) {
@@ -632,18 +728,18 @@ export const deleteImage = async (cpf: string, fileName: string): Promise<boolea
 
 /**
  * Remove múltiplas imagens do storage em uma única requisição
- * @param cpf - CPF do usuário
+ * @param userId - User ID (não é CPF)
  * @param fileNames - Array de nomes de arquivos para deletar
  * @returns Número de imagens deletadas com sucesso
  */
-export const deleteMultipleImages = async (cpf: string, fileNames: string[]): Promise<number> => {
+export const deleteMultipleImages = async (userId: string, fileNames: string[]): Promise<number> => {
   try {
     if (fileNames.length === 0) {
       return 0;
     }
 
-    // Preparar todos os caminhos dos arquivos
-    const filePaths = fileNames.map(fileName => `${cpf}/${fileName}`);
+    // Preparar todos os caminhos dos arquivos (usar userId)
+    const filePaths = fileNames.map(fileName => `${userId}/${fileName}`);
 
     // Fazer uma única requisição para deletar todos os arquivos
     const { data, error } = await supabase.storage
@@ -655,13 +751,26 @@ export const deleteMultipleImages = async (cpf: string, fileNames: string[]): Pr
       return 0;
     }
 
+    // Remover da tabela Supabase
+    const uniqueIds = fileNames.map(fileName => 
+      btoa(`${userId}-${fileName}`).replace(/\//g, '-').replace(/\+/g, '_').replace(/=/g, '')
+    );
+    try {
+      await supabase
+        .from('image_links')
+        .delete()
+        .in('unique_id', uniqueIds);
+    } catch (error) {
+      // Erro silencioso
+    }
+
     // Remover os links únicos do localStorage
     const links = getImageLinks();
     let removedCount = 0;
     
     for (const fileName of fileNames) {
       const linkToRemove = Object.keys(links).find(id => 
-        links[id].cpf === cpf && links[id].filename === fileName
+        (links[id].userId === userId || links[id].cpf === userId) && links[id].filename === fileName
       );
       
       if (linkToRemove) {
@@ -675,7 +784,7 @@ export const deleteMultipleImages = async (cpf: string, fileNames: string[]): Pr
     }
 
     // Invalidar cache após deleção
-    invalidateUserImagesCache(cpf);
+    invalidateUserImagesCache(userId);
 
     // Retornar o número de arquivos deletados
     // O Supabase retorna um array com os nomes dos arquivos deletados

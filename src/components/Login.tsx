@@ -16,7 +16,7 @@ const Login: React.FC = () => {
     setError('');
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
     if (!isValidCPF(cpf)) {
@@ -24,9 +24,14 @@ const Login: React.FC = () => {
       return;
     }
 
-    login(cpf);
-    // Redirecionar para o dashboard após login
-    navigate('/dashboard');
+    try {
+      setError('');
+      await login(cpf);
+      // Redirecionar para o dashboard após login
+      navigate('/dashboard');
+    } catch (err: any) {
+      setError(err.message || 'Erro ao fazer login. Por favor, tente novamente.');
+    }
   };
 
   return (

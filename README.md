@@ -1,6 +1,6 @@
 # Image Hub
 
-Uma aplicação web moderna desenvolvida em React com TypeScript para gerenciamento de imagens com autenticação por CPF.
+Uma aplicação web moderna em React + TypeScript para gerenciamento de imagens com autenticação baseada em CPF (sem expor CPF no Supabase). O projeto utiliza um identificador derivado do CPF (userId) e Edge Functions para proteger requisições e links públicos.
 
 ## 🚀 Visão Geral
 
@@ -8,12 +8,13 @@ O Image Hub é uma aplicação de página única (SPA) que permite aos usuários
 
 ## ✨ Funcionalidades Principais
 
-### 🔐 Autenticação por CPF
+### 🔐 Autenticação por CPF (sem expor CPF)
 - Tela de login com campo de CPF formatado (000.000.000-00)
 - Validação completa de CPF com verificação de dígitos verificadores
-- Máscara automática de formatação durante a digitação
-- Persistência de sessão no LocalStorage
-- Área isolada por usuário
+- Geração de `userId` determinístico a partir do hash do CPF (client-side)
+- Chamada de Edge Function (`auth-user`) que recebe apenas o hash (não o CPF)
+- Persistência de sessão no LocalStorage (CPF local + `userId` público)
+- Área isolada por usuário usando `userId` no Storage (não usa CPF)
 
 ### 📤 Upload de Imagens
 - **Drag-and-drop**: Arraste e solte imagens diretamente na área de upload
@@ -45,11 +46,11 @@ O Image Hub é uma aplicação de página única (SPA) que permite aos usuários
   - Selecionar página inteira
 - **Informações de uso**: Visualize quantidade de imagens e espaço utilizado em tempo real
 
-### 🔗 Links Únicos
-- Cada imagem recebe um link único baseado em base64
+### 🔗 Links Únicos (sem expor paths)
+- Cada imagem recebe um `uniqueId` (base64 determinístico)
 - Acesso público sem necessidade de autenticação
-- Visualizador de imagem dedicado em tela cheia
-- URLs limpas sem expor CPF
+- Visualizador dedicado em tela cheia
+- Entrega via Edge Function (`image-proxy`) que busca o arquivo interno e retorna o binário (o path real não é exposto)
 
 ### 🎨 Interface e Experiência
 - **Dark Mode**: Suporte completo a tema claro/escuro com detecção automática de preferência do sistema
@@ -66,6 +67,7 @@ O Image Hub é uma aplicação de página única (SPA) que permite aos usuários
 - **TypeScript** - Superset do JavaScript com tipagem estática
 - **Tailwind CSS 3.4** - Framework CSS utility-first
 - **Supabase Storage** - Armazenamento de imagens na nuvem
+- **Supabase Edge Functions** - Autenticação por hash e proxy seguro de imagens
 - **React Router DOM** - Roteamento de páginas
 - **browser-image-compression** - Compressão de imagens no cliente
 - **React Context API** - Gerenciamento de estado global (Auth e Theme)
@@ -89,9 +91,17 @@ src/
 │   └── imageService.ts     # Serviço de gerenciamento de imagens
 │                            # (upload, listagem, exclusão, compressão, cache)
 ├── utils/                  # Funções utilitárias
-│   └── cpf.ts              # Validação e formatação de CPF
+│   ├── cpf.ts              # Validação e formatação de CPF
+│   └── userMapping.ts      # Hash de CPF e geração de userId
 ├── App.tsx                 # Componente raiz com rotas
 └── index.tsx               # Ponto de entrada
+
+supabase/
+└── functions/
+    ├── auth-user/          # Edge Function: autenticação por hash CPF
+    │   └── index.ts
+    └── image-proxy/        # Edge Function: proxy seguro de imagens públicas
+        └── index.ts
 ```
 
 ## ⚙️ Configuração e Instalação
@@ -113,6 +123,32 @@ src/
 REACT_APP_SUPABASE_URL=https://seu-projeto.supabase.co
 REACT_APP_SUPABASE_ANON_KEY=sua-chave-anon-key
 ```
+
+3. **Criar tabelas e políticas (SQL)**
+
+Execute no SQL Editor do Supabase o script:
+
+```
+supabase_migration.sql
+```
+
+Ele cria as tabelas:
+- `users` (mapeia `cpf_hash` → `user_id`)
+- `image_links` (mapeia `unique_id` → `file_path`)
+
+E habilita as políticas (RLS) adequadas para leitura pública de links e operação via funções.
+
+4. **Deploy das Edge Functions**
+
+Configure as secrets e faça o deploy:
+
+```bash
+supabase functions deploy auth-user
+supabase functions deploy image-proxy
+```
+
+No Dashboard → Edge Functions → Secrets, adicione:
+- `SUPABASE_SERVICE_ROLE_KEY` (Service Role Key do projeto)
 
 ### Instalação
 
@@ -138,9 +174,9 @@ O build será gerado na pasta `build/`.
 
 ### 1. Login
 - Acesse a aplicação no navegador
-- Digite seu CPF no formato 000.000.000-00
-- A máscara é aplicada automaticamente
-- Clique em "Entrar" após inserir um CPF válido
+- Digite seu CPF (000.000.000-00)
+- O cliente gera `userId` via hash e autentica na Edge Function `auth-user`
+- Ao sucesso, você é redirecionado para o Dashboard
 
 ### 2. Upload de Imagens
 - **Método 1**: Arraste e solte imagens na área de upload
@@ -162,10 +198,10 @@ O build será gerado na pasta `build/`.
   - Use "Selecionar página" para selecionar todas da página atual
   - Clique em "Excluir selecionadas" para remover em massa
 
-### 4. Visualizar Imagem
-- Use o link único compartilhado para acessar uma imagem
-- A imagem será exibida em tela cheia
-- Não é necessário estar autenticado para visualizar
+### 4. Visualizar Imagem (link público)
+- Use o link único `/image/{uniqueId}`
+- A página chama a Edge Function `image-proxy` com `uniqueId`
+- A função retorna o binário da imagem (o path real `userId/filename` não é exposto)
 
 ## 🔒 Limites e Recursos
 
@@ -197,10 +233,10 @@ O build será gerado na pasta `build/`.
 - Se a compressão falhar, a imagem não é enviada (proteção de qualidade)
 
 ### Links Únicos
-- Geração determinística usando base64
-- Não expõe CPF na URL
-- Acesso público sem autenticação
-- Persistência no localStorage como backup
+- `uniqueId` determinístico (base64 de `userId-filename`)
+- Não expõe CPF nem caminhos internos
+- Acesso público sem autenticação via Edge Function
+- Persistência no localStorage como backup (mapeamento auxiliar)
 
 ### Performance
 - Cache de 5 segundos para contagens de imagens
@@ -244,11 +280,11 @@ npm run build && npx serve -s build
 
 ## 🔐 Segurança
 
-- CPF é validado antes do acesso
-- Cada usuário tem acesso apenas às suas próprias imagens
-- Links únicos são gerados de forma determinística mas não reversível facilmente
-- Imagens são armazenadas de forma isolada por CPF
-- Validação de limites no cliente e servidor
+- CPF é validado e transformado em hash (client-side); o CPF nunca é enviado ao Supabase
+- `userId` (derivado do hash) é usado para isolar diretórios no Storage
+- Edge Function `image-proxy` evita exposição de caminhos e oculta identifiers em requisições públicas
+- Links únicos são determinísticos e não expõem CPF
+- Limites por usuário (100 imagens ou 20MB) calculados com base no tamanho pós-compressão
 
 ## 📊 Requisitos Técnicos
 
@@ -268,3 +304,7 @@ Este projeto é privado e de uso interno.
 ---
 
 **Desenvolvido com ❤️ usando React e TypeScript**
+
+---
+
+Notas de migração e proteção de CPF: consulte `MIGRACAO_PROTECAO_CPF.md`.

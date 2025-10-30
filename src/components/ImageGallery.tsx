@@ -15,7 +15,7 @@ interface ImageGalleryProps {
 }
 
 const ImageGallery: React.FC<ImageGalleryProps> = ({ onDeleteSuccess }) => {
-  const { cpf } = useAuth();
+  const { userId } = useAuth();
   const [images, setImages] = useState<ImageInfo[]>([]);
   const [loading, setLoading] = useState(false);
   const [deletingId, setDeletingId] = useState<number | null>(null);
@@ -30,7 +30,7 @@ const ImageGallery: React.FC<ImageGalleryProps> = ({ onDeleteSuccess }) => {
   const loadingRef = useRef(false); // Ref para evitar chamadas duplicadas
 
   const loadImages = useCallback(async () => {
-    if (!cpf) return;
+    if (!userId) return;
     
     // Evitar chamadas duplicadas simultâneas
     if (loadingRef.current) return;
@@ -46,8 +46,8 @@ const ImageGallery: React.FC<ImageGalleryProps> = ({ onDeleteSuccess }) => {
       
       // Fazer ambas as chamadas em paralelo se precisar carregar total
       const [totalResult, imageUrls] = await Promise.all([
-        shouldLoadTotal ? countUserImages(cpf) : Promise.resolve(null),
-        listUserImages(cpf, itemsPerPage, offset)
+        shouldLoadTotal ? countUserImages(userId) : Promise.resolve(null),
+        listUserImages(userId, itemsPerPage, offset)
       ]);
       
       if (shouldLoadTotal && totalResult !== null) {
@@ -83,20 +83,20 @@ const ImageGallery: React.FC<ImageGalleryProps> = ({ onDeleteSuccess }) => {
       loadingRef.current = false;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cpf, currentPage, itemsPerPage]);
+  }, [userId, currentPage, itemsPerPage]);
 
   useEffect(() => {
     loadImages();
-  }, [loadImages]);
+  }, [loadImages, userId]);
 
   const handleDelete = async (displayIndex: number, filename: string) => {
-    if (!cpf || !window.confirm('Tem certeza que deseja excluir esta imagem?')) {
+    if (!userId || !window.confirm('Tem certeza que deseja excluir esta imagem?')) {
       return;
     }
     
     setDeletingId(displayIndex);
     try {
-      const success = await deleteImage(cpf, filename);
+      const success = await deleteImage(userId, filename);
       if (success) {
         // Atualizar total e remover imagem da lista atual
         if (totalImages !== null && totalImages > 0) {
@@ -166,7 +166,7 @@ const ImageGallery: React.FC<ImageGalleryProps> = ({ onDeleteSuccess }) => {
   const selectedCount = Object.keys(selectedMap).length;
 
   const handleBulkDelete = async () => {
-    if (!cpf || selectedCount === 0) return;
+    if (!userId || selectedCount === 0) return;
     if (!window.confirm(`Excluir ${selectedCount} imagem(ns)?`)) return;
 
     setIsBulkDeleting(true);
@@ -175,7 +175,7 @@ const ImageGallery: React.FC<ImageGalleryProps> = ({ onDeleteSuccess }) => {
       const fileNames = Object.values(selectedMap); // [filename, filename, ...]
       
       // Deletar todas as imagens em uma única requisição
-      const successCount = await deleteMultipleImages(cpf, fileNames);
+      const successCount = await deleteMultipleImages(userId, fileNames);
 
       if (successCount > 0) {
         // Limpar seleção primeiro

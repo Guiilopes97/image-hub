@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { getImageLink } from '../services/imageService';
+import { supabase } from '../config/supabase';
 
 const ImageViewer: React.FC = () => {
   const { uniqueId } = useParams<{ uniqueId: string }>();
@@ -11,9 +12,17 @@ const ImageViewer: React.FC = () => {
   const [filename, setFilename] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const hasRequestedRef = useRef(false); // evita requests duplicadas em StrictMode
 
   useEffect(() => {
+    let blobUrl: string | null = null;
+    let isMounted = true;
+
     const loadImage = async () => {
+      // Guard contra duplo disparo em StrictMode
+      if (hasRequestedRef.current) return;
+      hasRequestedRef.current = true;
+
       if (!uniqueId) {
         setError('Link inválido');
         setLoading(false);
@@ -23,8 +32,8 @@ const ImageViewer: React.FC = () => {
       try {
         setLoading(true);
         
-        // Buscar o link único
-        const imageLink = getImageLink(uniqueId);
+        // Buscar o link único (agora é async porque consulta tabela Supabase primeiro)
+        const imageLink = await getImageLink(uniqueId);
         
         if (!imageLink) {
           setError('Imagem não encontrada');
@@ -34,27 +43,78 @@ const ImageViewer: React.FC = () => {
 
         setFilename(imageLink.filename);
 
-        // Construir URL da imagem no Supabase
+        // Usar Edge Function como proxy para não expor nenhum path (incluindo userId)
         const supabaseUrl = process.env.REACT_APP_SUPABASE_URL || '';
-        const bucket = 'images';
-        const imagePath = `${imageLink.cpf}/${imageLink.filename}`;
-        const fullUrl = `${supabaseUrl}/storage/v1/object/public/${bucket}/${imagePath}`;
+        const anonKey = process.env.REACT_APP_SUPABASE_ANON_KEY || '';
+        const functionUrl = `${supabaseUrl}/functions/v1/image-proxy`;
         
-        setImageUrl(fullUrl);
-        
-        // Verificar se a imagem existe
-        const response = await fetch(fullUrl, { method: 'HEAD' });
-        if (!response.ok) {
-          setError('Imagem não encontrada');
+        try {
+          const response = await fetch(functionUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'apikey': anonKey,
+              'Authorization': `Bearer ${anonKey}`
+            },
+            body: JSON.stringify({ unique_id: uniqueId })
+          });
+
+          if (!response.ok) {
+            throw new Error('Imagem não encontrada');
+          }
+
+          const blob = await response.blob();
+          blobUrl = URL.createObjectURL(blob);
+          
+          if (isMounted) {
+            setImageUrl(blobUrl);
+          }
+        } catch (proxyError) {
+          // Fallback: tentar download direto (para compatibilidade com links antigos)
+          const pathIdentifier = imageLink.userId || imageLink.cpf;
+          if (!pathIdentifier) {
+            throw new Error('Imagem não encontrada');
+          }
+          
+          const imagePath = `${pathIdentifier}/${imageLink.filename}`;
+          const { data: fileData, error: downloadError } = await supabase.storage
+            .from('images')
+            .download(imagePath);
+          
+          if (downloadError || !fileData) {
+            throw new Error('Imagem não encontrada');
+          }
+          
+          blobUrl = URL.createObjectURL(fileData);
+          
+          if (isMounted) {
+            setImageUrl(blobUrl);
+          }
         }
       } catch (err) {
-        setError('Erro ao carregar imagem');
+        if (isMounted) {
+          setError('Erro ao carregar imagem');
+        }
       } finally {
-        setLoading(false);
+        if (isMounted) {
+          setLoading(false);
+        }
       }
     };
 
     loadImage();
+
+    // Cleanup: revogar URL do blob quando componente desmontar ou uniqueId mudar
+    return () => {
+      isMounted = false;
+      if (blobUrl) {
+        URL.revokeObjectURL(blobUrl);
+      }
+      // Limpar estado de imagem anterior se mudar o uniqueId
+      setImageUrl(null);
+      // Permitir nova tentativa quando uniqueId mudar
+      hasRequestedRef.current = false;
+    };
   }, [uniqueId]);
 
   return (
