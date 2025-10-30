@@ -27,8 +27,8 @@ O Image Hub é uma aplicação de página única (SPA) que permite aos usuários
 - **Upload paralelo**: Todas as imagens são enviadas simultaneamente para maior velocidade
 - **Barra de progresso**: Acompanhe o upload em tempo real com porcentagem
 - **Limites inteligentes**: 
-  - Máximo de 100 imagens por usuário
-  - Máximo de 20MB de armazenamento por usuário
+  - Máximo de 50 imagens por usuário
+  - Máximo de 10MB de armazenamento por usuário
   - Verificação automática antes e durante o upload
 
 ### 🖼️ Galeria de Imagens
@@ -206,8 +206,8 @@ O build será gerado na pasta `build/`.
 ## 🔒 Limites e Recursos
 
 ### Limites por Usuário
-- **Quantidade máxima**: 100 imagens
-- **Espaço máximo**: 20MB de armazenamento
+- **Quantidade máxima**: 50 imagens
+- **Espaço máximo**: 10MB de armazenamento
 - **Upload por vez**: Máximo de 10 imagens
 - **Tamanho por imagem**: Máximo 2MB após compressão
 
@@ -254,13 +254,13 @@ O build será gerado na pasta `build/`.
 - Verifique os logs do console do navegador
 
 **Upload falha:**
-- Verifique se não excedeu os limites (100 imagens ou 20MB)
+- Verifique se não excedeu os limites (50 imagens ou 10MB)
 - Confirme que as imagens são válidas
 - Verifique sua conexão com a internet
 
 **Limite atingido:**
 - Exclua algumas imagens antigas
-- O limite é de 100 imagens OU 20MB (o que ocorrer primeiro)
+- O limite é de 50 imagens OU 10MB (o que ocorrer primeiro)
 
 ## 📝 Scripts Disponíveis
 
@@ -284,7 +284,7 @@ npm run build && npx serve -s build
 - `userId` (derivado do hash) é usado para isolar diretórios no Storage
 - Edge Function `image-proxy` evita exposição de caminhos e oculta identifiers em requisições públicas
 - Links únicos são determinísticos e não expõem CPF
-- Limites por usuário (100 imagens ou 20MB) calculados com base no tamanho pós-compressão
+- Limites por usuário (50 imagens ou 10MB) calculados com base no tamanho pós-compressão
 
 ## 📊 Requisitos Técnicos
 

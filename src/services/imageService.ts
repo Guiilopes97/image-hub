@@ -2,8 +2,8 @@ import { supabase } from '../config/supabase';
 import imageCompression from 'browser-image-compression';
 
 // Limites por usuário
-const MAX_IMAGES_PER_USER = 100;
-const MAX_STORAGE_PER_USER_MB = 20;
+const MAX_IMAGES_PER_USER = 50;
+const MAX_STORAGE_PER_USER_MB = 10;
 
 export interface ImageData {
   id: string;

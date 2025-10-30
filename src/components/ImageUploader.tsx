@@ -233,7 +233,7 @@ const ImageUploader: React.FC<ImageUploaderProps> = ({ onUploadSuccess, deleteTr
         {usageInfo && (
           <div className="text-xs sm:text-sm text-gray-400 space-y-1">
             <div>Imagens: <span className="font-medium text-gray-300">{usageInfo.images}/100</span></div>
-            <div>Espaço: <span className="font-medium text-gray-300">{usageInfo.storageMB.toFixed(2)}MB/20MB</span></div>
+            <div>Espaço: <span className="font-medium text-gray-300">{usageInfo.storageMB.toFixed(2)}MB/10MB</span></div>
           </div>
         )}
       </div>
