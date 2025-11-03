@@ -795,3 +795,18 @@ export const deleteMultipleImages = async (userId: string, fileNames: string[]):
   }
 };
 
+/**
+ * Gera a URL pública da imagem que pode ser usada diretamente em tags <img>
+ * @param uniqueId - ID único da imagem
+ * @returns URL pública da imagem (ex: http://localhost:3000/image/{uniqueId})
+ */
+export const getPublicImageUrl = (uniqueId: string): string => {
+  // Se estiver em desenvolvimento, usar localhost
+  // Se estiver em produção, usar a URL do domínio atual
+  const baseUrl = process.env.NODE_ENV === 'production' 
+    ? window.location.origin 
+    : window.location.origin; // React usa a mesma porta, proxy redireciona
+  
+  return `${baseUrl}/image/${uniqueId}`;
+};
+

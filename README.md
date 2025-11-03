@@ -118,11 +118,32 @@ supabase/
    - Crie um bucket chamado `images`
    - Configure como público se desejar acesso público às imagens
 
-2. **Criar arquivo .env** na raiz do projeto:
-```env
-REACT_APP_SUPABASE_URL=https://seu-projeto.supabase.co
-REACT_APP_SUPABASE_ANON_KEY=sua-chave-anon-key
-```
+2. **Criar arquivo `.env`** na raiz do projeto:
+   
+   **Opção 1**: Copie o arquivo `env.example.txt` para `.env` e preencha com suas credenciais:
+   ```bash
+   # Windows PowerShell:
+   Copy-Item env.example.txt .env
+   
+   # Linux/Mac:
+   cp env.example.txt .env
+   ```
+   
+   **Opção 2**: Crie manualmente o arquivo `.env` com o seguinte conteúdo:
+   ```env
+   REACT_APP_SUPABASE_URL=https://seu-projeto.supabase.co
+   REACT_APP_SUPABASE_ANON_KEY=sua-chave-anon-key
+   SUPABASE_SERVICE_ROLE_KEY=sua-chave-service-role-key
+   ```
+
+   **Onde encontrar as credenciais:**
+   - Acesse seu projeto no [Dashboard do Supabase](https://app.supabase.com)
+   - Vá em **Settings** → **API**
+   - **Project URL**: Use como `REACT_APP_SUPABASE_URL`
+   - **anon public key**: Use como `REACT_APP_SUPABASE_ANON_KEY`
+   - **service_role secret**: Use como `SUPABASE_SERVICE_ROLE_KEY` ⚠️ **MANTENHA SECRETO!**
+
+   **⚠️ IMPORTANTE**: Nunca exponha o `SUPABASE_SERVICE_ROLE_KEY` em código frontend ou repositórios públicos!
 
 3. **Criar tabelas e políticas (SQL)**
 
@@ -156,11 +177,24 @@ No Dashboard → Edge Functions → Secrets, adicione:
 # Instalar dependências
 npm install
 
-# Iniciar servidor de desenvolvimento
-npm start
+# Iniciar servidor de desenvolvimento (React + Servidor de Imagens)
+npm run dev
 ```
 
-Abra [http://localhost:3000](http://localhost:3000) para ver a aplicação no navegador.
+Isso iniciará tudo na **porta 3000**:
+- **React App** em [http://localhost:3000](http://localhost:3000)
+- **API de Imagens** em [http://localhost:3000/image/{uniqueId}](http://localhost:3000/image/{uniqueId})
+
+**Nota**: Em desenvolvimento, o React roda internamente na porta 3001 e o servidor Express faz proxy para ele. Tudo é acessível através da porta 3000.
+
+**Comandos separados** (para debug):
+- `npm start` - apenas o React (porta 3001)
+- `npm run server` - apenas o servidor Express (porta 3000)
+
+As URLs públicas funcionais estão no formato:
+- `http://localhost:3000/image/{uniqueId}`
+
+Essas URLs podem ser usadas diretamente em tags `<img>` em outros sistemas.
 
 ### Build para Produção
 
@@ -169,6 +203,42 @@ npm run build
 ```
 
 O build será gerado na pasta `build/`.
+
+**Para produção**, você pode rodar apenas o servidor Express que serve tanto as imagens quanto o React:
+
+```bash
+NODE_ENV=production PORT=3000 node server.js
+```
+
+## 🔧 Troubleshooting
+
+### Erro: "Error occurred while trying to proxy"
+
+Este erro pode ocorrer se o React dev server não estiver rodando. Verifique:
+
+1. **Inicie ambos os servidores:**
+   ```bash
+   npm run dev
+   ```
+   Isso deve iniciar:
+   - React dev server na porta 3001 (interno)
+   - Servidor Express na porta 3000 (principal)
+
+2. **Verifique as variáveis de ambiente:**
+   - Certifique-se de que `SUPABASE_SERVICE_ROLE_KEY` está configurado no `.env`
+   - O servidor precisa dessa chave para acessar o Supabase
+
+3. **Teste o servidor:**
+   ```bash
+   # Health check
+   http://localhost:3000/health
+   
+   # Deve retornar: {"status":"ok","service":"image-server"}
+   ```
+
+4. **Verifique os logs:**
+   - Ambos os servidores devem mostrar mensagens de inicialização
+   - Verifique se há erros de conexão com o Supabase
 
 ## 📖 Como Usar
 
@@ -198,7 +268,17 @@ O build será gerado na pasta `build/`.
   - Use "Selecionar página" para selecionar todas da página atual
   - Clique em "Excluir selecionadas" para remover em massa
 
-### 4. Visualizar Imagem (link público)
+### 4. Links Públicos de Imagens
+
+As imagens podem ser acessadas através de URLs públicas funcionais:
+
+- **URL pública**: `http://localhost:3000/image/{uniqueId}`
+- Estas URLs podem ser usadas diretamente em tags `<img>` em outros sistemas
+- Exemplo: `<img src="http://localhost:3000/image/MjE2ZDUzOGFjZTJmODI5Mi0xNzYyMTk4NDk5NTE2LXMxMHBpazUud2VicA">`
+
+O servidor de imagens faz proxy seguro das imagens do Supabase sem expor informações sensíveis.
+
+### 5. Visualizar Imagem (link público)
 - Use o link único `/image/{uniqueId}`
 - A página chama a Edge Function `image-proxy` com `uniqueId`
 - A função retorna o binário da imagem (o path real `userId/filename` não é exposto)

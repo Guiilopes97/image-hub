@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { listUserImages, deleteImage, deleteMultipleImages, countUserImages } from '../services/imageService';
+import { listUserImages, deleteImage, deleteMultipleImages, countUserImages, getPublicImageUrl } from '../services/imageService';
 
 interface ImageInfo {
   url: string;
@@ -55,7 +55,7 @@ const ImageGallery: React.FC<ImageGalleryProps> = ({ onDeleteSuccess }) => {
       }
       
       const imageData: ImageInfo[] = imageUrls.map(img => {
-        const projectUrl = `${window.location.origin}/image/${img.uniqueId}`;
+        const projectUrl = getPublicImageUrl(img.uniqueId);
         return { 
           url: img.url,
           thumbUrl: img.thumbUrl,
